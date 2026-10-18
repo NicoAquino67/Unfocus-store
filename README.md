@@ -1,4 +1,4 @@
-# UnFocus Mall
+﻿# UnFocus Mall
 
 Tienda de ropa con React, Vite, Express y SQLite. Los precios se almacenan en pesos argentinos (ARS); la tienda puede mostrar una conversión indicativa a USD.
 
@@ -41,6 +41,20 @@ El costo de envío, el umbral de envío gratis, la dirección de retiro y los da
 ### Emails
 
 Se envían por SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_SECURE`, `CONTACT_FROM_EMAIL`): pago recibido, pedido despachado, pedido cancelado, recuperación de contraseña y formulario de contacto. Sin SMTP configurado no se envía nada y la app sigue funcionando.
+
+### Funcionalidades de tienda
+
+- **Expiración de pedidos**: los pedidos en `pending_payment` pasan a cancelados tras `PENDING_ORDER_EXPIRY_DAYS` (3 por defecto) y devuelven stock, cupón y saldo de tarjeta.
+- **Webhook seguro**: se valida la cabecera `x-signature` con `MP_WEBHOOK_SECRET` (clave secreta de Webhooks en el panel de Mercado Pago).
+- **Cuotas y medios de pago**: los gestiona Mercado Pago. La transferencia bancaria se configura en el admin (titular, banco, CBU, alias) y el checkout muestra los pasos.
+- **Stock**: cancelar un pedido desde el admin restaura stock (y cupón/saldo de tarjeta); reactivarlo lo vuelve a descontar.
+- **Emails**: bienvenida, pedido creado, pago confirmado, envío; baja de newsletter con enlace.
+- **Defensa del consumidor** y botón de baja en el pie y en las páginas legales.
+- **Catálogo**: orden por precio, novedad y popularidad; "vistos recientemente" (con recomendaciones aleatorias para usuarios nuevos, sin repetir el producto abierto); galería de 3 a 10 imágenes con zoom (admin con carga múltiple).
+- **Preguntas frecuentes**: página `?faq=1` con las dudas más comunes.
+- **Compra como invitado**: sin cuenta, con nombre, email y teléfono; si el email ya tiene cuenta se pide iniciar sesión. Al registrarse con ese email se heredan los pedidos.
+- **Cupones**: porcentaje o monto fijo, mínimo de compra, usos máximos y vencimiento; se administran en el panel admin. No aplican a tarjetas de regalo.
+- **Tarjeta de regalo**: producto digital de 30.000 a 1.000.000 ARS (montos predefinidos o libre). Al confirmarse el pago se envía por email un código `GC-XXXX-XXXX-XXXX`, canjeable (parcial o total) en el checkout. El admin ve las tarjetas emitidas y su saldo.
 
 ### Páginas legales
 

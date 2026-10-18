@@ -1,4 +1,4 @@
-UnFocus · Checklist (comparativa con nike.com)
+﻿UnFocus · Checklist (comparativa con nike.com)
 
 Leyenda: [x] hecho · [ ] pendiente
 
@@ -30,27 +30,27 @@ Checkout y pagos
 [x] Cancelación automática tras más de 3 pagos rechazados, con stock liberado
 [x] Webhook probado en local con túnel (cloudflared)
 [ ] Probar un pago real/sandbox aprobado con un comprador distinto del vendedor (la pasarela sandbox dio "algo salió mal")
-[ ] Verificar la firma `x-signature` de las notificaciones de Mercado Pago
-[ ] Cuotas / otros medios de pago (revisar configuración de la preferencia)
+[x] Verificar la firma `x-signature` de las notificaciones de Mercado Pago
+[x] Cuotas (las gestiona Mercado Pago) y transferencia bancaria con datos y pasos en el checkout
 
 Pedidos y logística
 [x] Estados: pendiente, pagado, enviado, entregado, cancelado
 [x] Transporte, código y link de seguimiento visibles para el cliente
 [x] Panel admin: pedidos con dirección de entrega y formulario de despacho
-[ ] Restaurar stock cuando el admin cancela un pedido manualmente (hoy solo lo hace la cancelación automática)
+[x] Restaurar stock cuando el admin cancela un pedido manualmente (hoy solo lo hace la cancelación automática)
 [ ] Etiquetas de envío / integración con un correo (Andreani, Correo Argentino…)
 
 Emails transaccionales
 [x] Pago recibido, pedido despachado, pedido cancelado, recuperación de contraseña, contacto
 [ ] Configurar SMTP real (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, CONTACT_FROM_EMAIL) y probar el envío
-[ ] Email de pedido creado / bienvenida (opcional)
+[x] Email de pedido creado / bienvenida (opcional)
 
 Legales (Argentina)
 [x] Términos y condiciones, privacidad, cambios y devoluciones, botón de arrepentimiento
 [x] Datos de la tienda (razón social, CUIT, domicilio) en el pie, editables desde el admin
 [ ] Cargar los datos reales de la tienda en el panel admin
 [ ] Revisión de los textos legales por un abogado
-[ ] Defensa del consumidor / botón de baja según corresponda
+[x] Defensa del consumidor / botón de baja según corresponda
 
 Despliegue
 [x] Dockerfile y docker-compose
@@ -59,7 +59,7 @@ Despliegue
 [ ] Quitar MP_WEBHOOK_URL en producción (se usa PUBLIC_BASE_URL/api/payments/webhook)
 [ ] Dominio y certificado (unfocus.shop)
 [ ] Backups automáticos de la base de datos en producción
-[ ] Subir el repositorio a GitHub
+[x] Subir el repositorio a GitHub
 
 ========================================
 B. PARA ACERCARSE A NIKE.COM U OTRA TIENDA GRANDE
@@ -68,24 +68,24 @@ B. PARA ACERCARSE A NIKE.COM U OTRA TIENDA GRANDE
 Descubrimiento
 [ ] Buscador global con sugerencias
 [ ] Categorías y navegación por menús (hombre / mujer / niños / novedades / ofertas)
-[ ] Ordenar por precio, novedad y popularidad
+[x] Ordenar por precio, novedad y popularidad
 [ ] Paginación o carga infinita
 [ ] Colores y variantes de producto
 [ ] Productos relacionados y "completa el look"
-[ ] Vistos recientemente
+[x] Vistos recientemente
 [ ] Páginas de colección / lookbook
 
 Ficha de producto
-[ ] Zoom y más imágenes por producto, video
+[x] Zoom y más imágenes por producto (3 a 10; video pendiente)
 [ ] Aviso "volver a tener stock" por email
 [ ] Calculadora de envío por código postal en la ficha
 [ ] Estimación de fecha de entrega
-[ ] Preguntas y respuestas
+[x] Preguntas y respuestas
 
 Checkout
-[ ] Compra como invitado
-[ ] Cupones y códigos de descuento
-[ ] Tarjeta de regalo
+[x] Compra como invitado
+[x] Cupones y códigos de descuento
+[x] Tarjeta de regalo
 [ ] Múltiples direcciones guardadas en la cuenta
 [ ] Recuperación de carrito abandonado por email
 [ ] Seguimiento de envío integrado con el transporte
@@ -111,3 +111,5 @@ Operación y calidad
 [ ] Accesibilidad (auditoría WCAG) y rendimiento (Lighthouse)
 [ ] Migrar de SQLite a PostgreSQL si crece el volumen
 [ ] Páginas de ayuda / FAQ y chat de soporte
+
+- [x] Cancelación automática de pedidos pendientes de pago tras 3 días (PENDING_ORDER_EXPIRY_DAYS)
