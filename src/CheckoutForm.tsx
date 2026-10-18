@@ -4,7 +4,7 @@ import { apiRequest, type AccountUser, type ShippingDetails, type StoreConfig } 
 
 export type PaymentMethod = 'mercadopago' | 'transfer'
 export type GuestDetails = { name: string; email: string; phone: string }
-export type CheckoutPayload = { shipping: ShippingDetails; acceptTerms: boolean; paymentMethod: PaymentMethod; guest?: GuestDetails; couponCode?: string }
+export type CheckoutPayload = { shipping: ShippingDetails; acceptTerms: boolean; paymentMethod: PaymentMethod; guest?: GuestDetails; couponCode?: string; giftCardCode?: string }
 import { calculateShipping } from './shipping'
 import { formatPrice, type DisplayCurrency } from './catalog'
 
@@ -13,6 +13,7 @@ const provinces = ['Buenos Aires', 'Ciudad Autónoma de Buenos Aires', 'Catamarc
 type CheckoutFormProps = {
   user: AccountUser | null
   subtotal: number
+  digitalOnly: boolean
   items: { productId: number; size: string; quantity: number }[]
   shipping: StoreConfig['shipping'] | null
   transfer: StoreConfig['transfer']
@@ -25,11 +26,14 @@ type CheckoutFormProps = {
   onSubmit: (payload: CheckoutPayload) => void
 }
 
-function CheckoutForm({ user, subtotal, items, shipping, transfer, currency, usdArsRate, isSubmitting, onBack, onOpenTerms, onRequestLogin, onSubmit }: CheckoutFormProps) {
+function CheckoutForm({ user, subtotal, digitalOnly, items, shipping, transfer, currency, usdArsRate, isSubmitting, onBack, onOpenTerms, onRequestLogin, onSubmit }: CheckoutFormProps) {
   const [form, setForm] = useState<ShippingDetails>({ method: 'delivery', name: user?.name ?? '', phone: user?.phone ?? '', street: '', city: '', province: '', postalCode: '', notes: '' })
   const [couponInput, setCouponInput] = useState('')
   const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discountArs: number } | null>(null)
   const [couponMessage, setCouponMessage] = useState('')
+  const [giftInput, setGiftInput] = useState('')
+  const [appliedGift, setAppliedGift] = useState<{ code: string; balanceArs: number } | null>(null)
+  const [giftMessage, setGiftMessage] = useState('')
   const [guestEmail, setGuestEmail] = useState('')
   const [acceptTerms, setAcceptTerms] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('mercadopago')
@@ -50,7 +54,19 @@ function CheckoutForm({ user, subtotal, items, shipping, transfer, currency, usd
   }, [canPickup, isGuest])
 
   const discount = Math.min(appliedCoupon?.discountArs ?? 0, subtotal)
-  const shippingCost = calculateShipping(subtotal - discount, form.method, shipping)
+  const shippingCost = digitalOnly ? 0 : calculateShipping(subtotal - discount, form.method, shipping)
+  const giftDiscount = Math.min(appliedGift?.balanceArs ?? 0, subtotal - discount + shippingCost)
+  const applyGiftCard = async () => {
+    setGiftMessage('')
+    try {
+      const result = await apiRequest<{ code: string; balanceArs: number }>('/api/gift-cards/validate', { method: 'POST', body: JSON.stringify({ code: giftInput }) })
+      setAppliedGift(result)
+      setGiftMessage(`Tarjeta aplicada. Saldo disponible: ${formatPrice(result.balanceArs, currency, usdArsRate)}.`)
+    } catch (requestError) {
+      setAppliedGift(null)
+      setGiftMessage(requestError instanceof Error ? requestError.message : 'No se pudo validar la tarjeta.')
+    }
+  }
   const applyCoupon = async () => {
     setCouponMessage('')
     try {
@@ -66,14 +82,15 @@ function CheckoutForm({ user, subtotal, items, shipping, transfer, currency, usd
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     onSubmit({
-      shipping: form,
+      shipping: digitalOnly ? { ...form, method: 'digital' as ShippingDetails['method'] } : form,
       acceptTerms,
       paymentMethod: paymentMethod === 'transfer' && !transfer ? 'mercadopago' : paymentMethod,
+      ...(appliedGift ? { giftCardCode: appliedGift.code } : {}),
       ...(appliedCoupon ? { couponCode: appliedCoupon.code } : {}),
       ...(isGuest ? { guest: { name: form.name, email: guestEmail, phone: form.phone } } : {}),
     })
   }
-  const isDelivery = form.method === 'delivery'
+  const isDelivery = !digitalOnly && form.method === 'delivery'
 
   return (
     <form className="checkout-form" onSubmit={submit}>
@@ -85,15 +102,16 @@ function CheckoutForm({ user, subtotal, items, shipping, transfer, currency, usd
           <label><span>Correo electrónico</span><input required type="email" maxLength={254} autoComplete="email" value={guestEmail} onChange={(event) => setGuestEmail(event.target.value)} /></label>
         </div>
       )}
-      {canPickup && (
+      {digitalOnly && <p className="checkout-form__pickup">Tu pedido es digital: no necesita dirección de envío. Te enviamos el código de la tarjeta por correo cuando se confirme el pago.</p>}
+      {canPickup && !digitalOnly && (
         <fieldset className="checkout-form__methods">
           <legend>Cómo quieres recibirlo</legend>
           <label><input type="radio" name="method" checked={isDelivery} onChange={() => update('method', 'delivery')} /> Envío a domicilio</label>
           <label><input type="radio" name="method" checked={!isDelivery} onChange={() => update('method', 'pickup')} /> Retiro en persona (sin costo)</label>
         </fieldset>
       )}
-      {!isDelivery && shipping?.pickupAddress && <p className="checkout-form__pickup">Retiras en: {shipping.pickupAddress}. Te avisaremos cuando esté listo.</p>}
-      <label><span>{isDelivery ? 'Nombre de quien recibe' : 'Nombre de quien retira'}</span><input required minLength={2} maxLength={80} autoComplete="name" value={form.name} onChange={(event) => update('name', event.target.value)} /></label>
+      {!isDelivery && !digitalOnly && shipping?.pickupAddress && <p className="checkout-form__pickup">Retiras en: {shipping.pickupAddress}. Te avisaremos cuando esté listo.</p>}
+      <label><span>{digitalOnly ? 'Tu nombre' : isDelivery ? 'Nombre de quien recibe' : 'Nombre de quien retira'}</span><input required minLength={2} maxLength={80} autoComplete="name" value={form.name} onChange={(event) => update('name', event.target.value)} /></label>
       <label><span>Teléfono de contacto</span><input required type="tel" maxLength={40} autoComplete="tel" value={form.phone} onChange={(event) => update('phone', event.target.value)} /></label>
       {isDelivery && (
         <>
@@ -106,16 +124,26 @@ function CheckoutForm({ user, subtotal, items, shipping, transfer, currency, usd
         </>
       )}
       <label><span>Indicaciones (opcional)</span><textarea rows={2} maxLength={200} value={form.notes} onChange={(event) => update('notes', event.target.value)} placeholder="Horario, referencias, timbre…" /></label>
+      {!digitalOnly && (
+      <>
       <div className="checkout-form__coupon">
         <label><span>Código de descuento</span><input value={couponInput} maxLength={30} onChange={(event) => { setCouponInput(event.target.value.toUpperCase()); setAppliedCoupon(null) }} placeholder="Opcional" /></label>
         <button type="button" disabled={!couponInput.trim()} onClick={() => { void applyCoupon() }}>Aplicar</button>
         {couponMessage && <p role="status">{couponMessage}</p>}
       </div>
+      <div className="checkout-form__coupon">
+        <label><span>Tarjeta de regalo</span><input value={giftInput} maxLength={30} onChange={(event) => { setGiftInput(event.target.value.toUpperCase()); setAppliedGift(null) }} placeholder="GC-XXXX-XXXX-XXXX" /></label>
+        <button type="button" disabled={!giftInput.trim()} onClick={() => { void applyGiftCard() }}>Aplicar</button>
+        {giftMessage && <p role="status">{giftMessage}</p>}
+      </div>
+      </>
+      )}
       <dl className="checkout-form__totals">
         <div><dt>Subtotal</dt><dd>{formatPrice(subtotal, currency, usdArsRate)}</dd></div>
         {discount > 0 && <div><dt>Descuento ({appliedCoupon?.code})</dt><dd>-{formatPrice(discount, currency, usdArsRate)}</dd></div>}
+        {giftDiscount > 0 && <div><dt>Tarjeta de regalo</dt><dd>-{formatPrice(giftDiscount, currency, usdArsRate)}</dd></div>}
         <div><dt>{isDelivery ? 'Envío' : 'Retiro'}</dt><dd>{shippingCost > 0 ? formatPrice(shippingCost, currency, usdArsRate) : 'Sin cargo'}</dd></div>
-        <div className="checkout-form__total"><dt>Total</dt><dd>{formatPrice(subtotal - discount + shippingCost, currency, usdArsRate)}</dd></div>
+        <div className="checkout-form__total"><dt>Total</dt><dd>{formatPrice(subtotal - discount + shippingCost - giftDiscount, currency, usdArsRate)}</dd></div>
       </dl>
       {isDelivery && shipping && shipping.freeThresholdArs > 0 && shippingCost > 0 && <p className="checkout-form__hint">Envío gratis desde {formatPrice(shipping.freeThresholdArs, currency, usdArsRate)}.</p>}
       {transfer && (

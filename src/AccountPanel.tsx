@@ -185,7 +185,7 @@ function AccountPanel({ user, authLoading, currency, usdArsRate, onAuthenticated
                 <div><span className={`account-order__status account-order__status--${order.status}`}>{orderStatusLabel(order.status)}</span><strong>{formatPrice(order.totalArs, currency, usdArsRate)}</strong></div>
               </div>
               <div className="account-order__meta">
-                <div className="account-order__items">{order.items.map((item, index) => <span key={`${order.id}-${index}`}>{item.quantity} × {item.name} · {item.size}</span>)}</div>
+                <div className="account-order__items">{order.items.map((item, index) => <span key={`${order.id}-${index}`}>{item.quantity} × {item.name} · {item.size}</span>)}{order.giftCards?.map((card) => <span key={card.code}>Código de tu tarjeta: <strong>{card.code}</strong> · saldo {formatPrice(card.balanceArs, currency, usdArsRate)}</span>)}{order.giftCardArs ? <span>Pagado con tarjeta de regalo: {formatPrice(order.giftCardArs, currency, usdArsRate)}</span> : null}{order.discountArs ? <span>Cupón {order.couponCode}: -{formatPrice(order.discountArs, currency, usdArsRate)}</span> : null}</div>
                 <button className="account-order__toggle" type="button" onClick={() => setSelectedOrderId(isOpen ? null : order.id)}>{isOpen ? 'Ocultar detalle' : 'Ver detalle'}</button>
               </div>
               {order.status === 'pending_payment' && order.paymentMethod === 'transfer' && order.transfer && (

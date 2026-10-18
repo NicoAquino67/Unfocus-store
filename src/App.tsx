@@ -20,7 +20,7 @@ import {
 } from 'lucide-react'
 import unfocusLogo from '../ident/png full color.png'
 import unfocusLogoWhite from '../ident/png blanco.png'
-import { categories, formatPrice, getProductImage, getProductFacets, getStockForSize, initialProducts, normalizeProductFacets, garmentCuts, productAudiences, productGenders, sizes, type CategoryFilter, type DisplayCurrency, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
+import { categories, formatPrice, getDefaultSize, getProductImage, getProductFacets, getStockForSize, giftCardAmounts, giftCardMaximum, giftCardMinimum, isValidGiftCardAmount, initialProducts, normalizeProductFacets, garmentCuts, productAudiences, productGenders, sizes, type CategoryFilter, type DisplayCurrency, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
 import { apiRequest, type AccountNotification, type AccountSummary, type AccountUser, type ProductReview, type StoreConfig } from './api'
 import AccountPanel from './AccountPanel'
 import ProductAdmin from './ProductAdmin'
@@ -179,7 +179,21 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
           <p className="product-detail__price">{formatPrice(product.price, currency, usdArsRate)}</p>
           <p className="product-detail__description">{product.description}</p>
           <div className="product-detail__story"><h2>Sobre el diseño</h2><p>{product.designDescription}</p></div>
-          <dl className="product-detail__specs"><div><dt>Composición</dt><dd>{product.composition}</dd></div><div><dt>Tallas disponibles</dt><dd>XS–3XL</dd></div><div><dt>Estampado</dt><dd>Frente y espalda</dd></div></dl>
+          {product.isGiftCard ? <p className="product-detail__gift-note">Sin vencimiento. El código llega por correo apenas se confirma el pago y se canjea en el checkout, por partes si quieres.</p> : <dl className="product-detail__specs"><div><dt>Composición</dt><dd>{product.composition}</dd></div><div><dt>Tallas disponibles</dt><dd>XS–3XL</dd></div><div><dt>Estampado</dt><dd>Frente y espalda</dd></div></dl>}
+          {product.isGiftCard ? (
+            <div className="product-detail__size">
+              <div className="product-detail__size-heading"><span id="product-size-label">Elige el monto</span></div>
+              <div className="product-detail__size-options product-detail__amount-options" role="group" aria-labelledby="product-size-label">
+                {giftCardAmounts.map((amount) => (
+                  <button className={selectedSize === String(amount) ? 'is-active' : ''} key={amount} type="button" onClick={() => onSizeChange(String(amount))} aria-pressed={selectedSize === String(amount)}><span><strong>{formatPrice(amount, currency, usdArsRate)}</strong></span></button>
+                ))}
+              </div>
+              <label className="product-detail__custom-amount"><span>O escribe otro monto (ARS, entre {giftCardMinimum.toLocaleString('es-AR')} y {giftCardMaximum.toLocaleString('es-AR')})</span>
+                <input type="number" inputMode="numeric" min={giftCardMinimum} max={giftCardMaximum} step="1" value={giftCardAmounts.includes(Number(selectedSize)) ? '' : selectedSize} onChange={(event) => onSizeChange(event.target.value)} placeholder="Ej. 85000" />
+              </label>
+              {!isValidGiftCardAmount(selectedSize) && <p className="product-detail__size-note" role="alert">El monto debe ser un número entero entre {giftCardMinimum.toLocaleString('es-AR')} y {giftCardMaximum.toLocaleString('es-AR')}.</p>}
+            </div>
+          ) : (
           <div className="product-detail__size">
             <div className="product-detail__size-heading"><span id="product-size-label">Elige tu talle</span><details className="product-size-guide">
               <summary>Guía de talles</summary>
@@ -201,7 +215,8 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
             </div>
             <p className="product-detail__size-note">La equivalencia puede variar según el calce de la prenda.</p>
           </div>
-          <button className="button button--coral product-detail__add" type="button" onClick={onAddToCart} disabled={getStockForSize(product, selectedSize) <= 0}>Añadir a la bolsa <ShoppingBag size={17} aria-hidden="true" /></button>
+          )}
+          <button className="button button--coral product-detail__add" type="button" onClick={onAddToCart} disabled={getStockForSize(product, selectedSize) <= 0 || (product.isGiftCard === true && !isValidGiftCardAmount(selectedSize))}>Añadir a la bolsa <ShoppingBag size={17} aria-hidden="true" /></button>
           <p className="product-detail__note">¿Necesitas ayuda para elegir? <button type="button" onClick={onOpenContact}>Escríbenos</button></p>
         </div>
       </div>
@@ -373,8 +388,8 @@ function ProductCard({ product, index, isFavorite, selectedSize, currency, usdAr
           <p className="product-card__category">{product.category}</p>
           <h3><button className="product-title-link" type="button" onClick={() => onOpenProduct(product)}><span className="product-card__title-stroke">{product.name}</span></button></h3>
           <div className="product-feature-list"><span>{product.composition}</span></div>
-          <label className="product-size"><span>Talla</span><select value={selectedSize} onChange={(event) => onSizeChange(event.target.value)} aria-label={`Talla para ${product.name}`}>{sizes.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
-          <span className="product-card__price">{formatPrice(product.price, currency, usdArsRate)}</span>
+          <label className="product-size"><span>{product.isGiftCard ? 'Monto' : 'Talla'}</span><select value={selectedSize} onChange={(event) => onSizeChange(event.target.value)} aria-label={`${product.isGiftCard ? 'Monto' : 'Talla'} para ${product.name}`}>{product.isGiftCard ? giftCardAmounts.map((amount) => <option key={amount} value={String(amount)}>{formatPrice(amount, currency, usdArsRate)}</option>) : sizes.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
+          <span className="product-card__price">{product.isGiftCard ? `Desde ${formatPrice(product.price, currency, usdArsRate)}` : formatPrice(product.price, currency, usdArsRate)}</span>
         </div>
       </div>
     </article>
@@ -578,7 +593,7 @@ function App() {
   const cartItems = Object.entries(cart).flatMap(([cartKey, quantity]) => {
     const [productId, size] = cartKey.split(':')
     const product = products.find((item) => item.id === Number(productId))
-    return product ? [{ ...product, size, quantity, cartKey }] : []
+    return product ? [{ ...product, price: product.isGiftCard ? Number(size) : product.price, size, quantity, cartKey }] : []
   })
   const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0)
   const cartTotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0)
@@ -593,7 +608,11 @@ function App() {
     : products.filter((item) => item.id !== activeProduct?.id).sort((first, second) => ((first.id * recommendationSeed * 9301) % 1) - ((second.id * recommendationSeed * 9301) % 1)).slice(0, 4)
 
   const addToCart = (product: Product) => {
-    const size = selectedSizes[product.id] ?? 'M'
+    const size = selectedSizes[product.id] ?? getDefaultSize(product)
+    if (product.isGiftCard && !isValidGiftCardAmount(size)) {
+      showNotice('Elige un monto válido para la tarjeta de regalo.')
+      return
+    }
     if (getStockForSize(product, size) <= 0) {
       showNotice(`La talla ${size} de ${product.name} no tiene stock disponible.`)
       return
@@ -782,13 +801,13 @@ function App() {
     setCheckoutStep('delivery')
   }
 
-  const handleCheckout = async ({ shipping, acceptTerms, paymentMethod, guest, couponCode }: CheckoutPayload) => {
+  const handleCheckout = async ({ shipping, acceptTerms, paymentMethod, guest, couponCode, giftCardCode }: CheckoutPayload) => {
     setIsCheckingOut(true)
     try {
       if (paymentMethod === 'transfer') {
         const transferResult = await apiRequest<{ order: { reference: string } }>('/api/orders', {
           method: 'POST',
-          body: JSON.stringify({ items: cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity })), shipping, acceptTerms, paymentMethod, guest, couponCode }),
+          body: JSON.stringify({ items: cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity })), shipping, acceptTerms, paymentMethod, guest, couponCode, giftCardCode }),
         })
         setCart({})
         setIsCartOpen(false)
@@ -799,7 +818,7 @@ function App() {
       }
       const result = await apiRequest<{ order: { reference: string }; paymentUrl: string | null }>('/api/payments/create-preference', {
         method: 'POST',
-        body: JSON.stringify({ items: cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity })), shipping, acceptTerms, guest, couponCode }),
+        body: JSON.stringify({ items: cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity })), shipping, acceptTerms, guest, couponCode, giftCardCode }),
       })
       setCart({})
       setIsCartOpen(false)
@@ -889,7 +908,7 @@ function App() {
             product={activeProduct}
             relatedProducts={relatedProducts}
             relatedTitle={hasRecentlyViewed ? 'Vistos recientemente' : 'También puede interesarte'}
-            selectedSize={selectedSizes[activeProduct.id] ?? 'M'}
+            selectedSize={selectedSizes[activeProduct.id] ?? getDefaultSize(activeProduct)}
             selectedView={selectedProductViews[activeProduct.id] ?? 0}
             currentUser={currentUser}
             currency={displayCurrency}
@@ -973,7 +992,7 @@ function App() {
           </div>
           {visibleProducts.length > 0 ? (
             <div className="product-grid">
-              {visibleProducts.map((product, index) => <ProductCard key={product.id} product={product} index={index} isFavorite={favorites.includes(product.id)} selectedSize={selectedSizes[product.id] ?? 'M'} currency={displayCurrency} usdArsRate={usdArsRate} onOpenProduct={navigateToProduct} onToggleFavorite={toggleFavorite} onAddToCart={addToCart} onSizeChange={(size) => setSelectedSizes((current) => ({ ...current, [product.id]: size }))} />)}
+              {visibleProducts.map((product, index) => <ProductCard key={product.id} product={product} index={index} isFavorite={favorites.includes(product.id)} selectedSize={selectedSizes[product.id] ?? getDefaultSize(product)} currency={displayCurrency} usdArsRate={usdArsRate} onOpenProduct={navigateToProduct} onToggleFavorite={toggleFavorite} onAddToCart={addToCart} onSizeChange={(size) => setSelectedSizes((current) => ({ ...current, [product.id]: size }))} />)}
             </div>
           ) : (
             <div className="empty-results"><Search size={23} strokeWidth={1.5} aria-hidden="true" /><p>No encontramos prendas con esos filtros.</p><button type="button" onClick={() => { setSearchQuery(''); setActiveCategory('Todo'); setCutFilter('Todas'); setAudienceFilter('Todos'); setGenderFilter('Todos') }}>Ver todas las prendas</button></div>
@@ -1009,7 +1028,7 @@ function App() {
           <aside className="cart-drawer" role="dialog" aria-modal="true" aria-labelledby="cart-title">
             <div className="cart-header"><div><p className="eyebrow">Tu selección</p><h2 id="cart-title">La bolsa <span>({cartCount})</span></h2></div><button className="icon-button" type="button" onClick={() => { setIsCartOpen(false); setCheckoutStep('bag') }} aria-label="Cerrar bolsa"><X size={21} /></button></div>
             {cartItems.length > 0 && checkoutStep === 'delivery' ? (
-              <CheckoutForm user={currentUser} subtotal={cartTotal} items={cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity }))} shipping={storeConfig?.shipping ?? null} transfer={storeConfig?.transfer ?? null} currency={displayCurrency} usdArsRate={usdArsRate} isSubmitting={isCheckingOut} onBack={() => setCheckoutStep('bag')} onOpenTerms={() => navigateToLegal('terminos')} onRequestLogin={() => { setIsCartOpen(false); setCheckoutStep('bag'); navigateToAccount() }} onSubmit={(payload) => { void handleCheckout(payload) }} />
+              <CheckoutForm user={currentUser} subtotal={cartTotal} items={cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity }))} shipping={storeConfig?.shipping ?? null} transfer={storeConfig?.transfer ?? null} currency={displayCurrency} usdArsRate={usdArsRate} isSubmitting={isCheckingOut} onBack={() => setCheckoutStep('bag')} onOpenTerms={() => navigateToLegal('terminos')} digitalOnly={cartItems.every((item) => item.isGiftCard)} onRequestLogin={() => { setIsCartOpen(false); setCheckoutStep('bag'); navigateToAccount() }} onSubmit={(payload) => { void handleCheckout(payload) }} />
             ) : cartItems.length === 0 ? (
               <div className="cart-empty"><div className="cart-empty__icon"><ShoppingBag size={26} strokeWidth={1.5} /></div><h3>Tu bolsa está vacía.</h3><p>Elige solo lo que se sienta bien para ti.</p><button className="button button--dark" type="button" onClick={() => setIsCartOpen(false)}>Seguir mirando <ArrowRight size={16} /></button></div>
             ) : (
@@ -1017,7 +1036,7 @@ function App() {
                 <div className="cart-items">{cartItems.map((item) => (
                   <article className="cart-item" key={item.cartKey}>
                     <img src={getProductImage(item)} alt={item.gallery?.[0]?.alt ?? item.alt} />
-                    <div className="cart-item__body"><p className="product-card__category">{item.category} · Talla {item.size}</p><h3>{item.name}</h3><strong>{formatPrice(item.price, displayCurrency, usdArsRate)}</strong><div className="quantity-stepper" aria-label={`Cantidad de ${item.name}, talla ${item.size}`}><button type="button" onClick={() => changeQuantity(item.cartKey, -1)} aria-label={`Quitar una unidad de ${item.name}, talla ${item.size}`}><Minus size={13} /></button><span>{item.quantity}</span><button type="button" onClick={() => changeQuantity(item.cartKey, 1)} aria-label={`Añadir una unidad de ${item.name}, talla ${item.size}`}><Plus size={13} /></button></div></div>
+                    <div className="cart-item__body"><p className="product-card__category">{item.isGiftCard ? 'Tarjeta de regalo' : `${item.category} · Talla ${item.size}`}</p><h3>{item.name}</h3><strong>{formatPrice(item.price, displayCurrency, usdArsRate)}</strong><div className="quantity-stepper" aria-label={`Cantidad de ${item.name}, talla ${item.size}`}><button type="button" onClick={() => changeQuantity(item.cartKey, -1)} aria-label={`Quitar una unidad de ${item.name}, talla ${item.size}`}><Minus size={13} /></button><span>{item.quantity}</span><button type="button" onClick={() => changeQuantity(item.cartKey, 1)} aria-label={`Añadir una unidad de ${item.name}, talla ${item.size}`}><Plus size={13} /></button></div></div>
                     <button className="cart-item__remove" type="button" onClick={() => changeQuantity(item.cartKey, -item.quantity)} aria-label={`Eliminar ${item.name}, talla ${item.size}`}><X size={16} /></button>
                   </article>
                 ))}</div>

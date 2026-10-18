@@ -161,10 +161,22 @@ const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().m
     payment_method: "TEXT NOT NULL DEFAULT 'mercadopago'",
     coupon_code: "TEXT NOT NULL DEFAULT ''",
     discount_ars: 'INTEGER NOT NULL DEFAULT 0',
+    gift_card_code: "TEXT NOT NULL DEFAULT ''",
+    gift_card_ars: 'INTEGER NOT NULL DEFAULT 0',
   }
   for (const [column, definition] of Object.entries(orderColumnDefinitions)) {
     if (!orderColumns.has(column)) database.exec(`ALTER TABLE orders ADD COLUMN ${column} ${definition}`)
   }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS gift_cards (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      initial_ars INTEGER NOT NULL CHECK (initial_ars > 0),
+      balance_ars INTEGER NOT NULL CHECK (balance_ars >= 0),
+      order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `)
   database.exec(`
     CREATE TABLE IF NOT EXISTS coupons (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -192,6 +204,7 @@ const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().m
   `)
   if (!columns.has('stock')) database.exec('ALTER TABLE products ADD COLUMN stock INTEGER NOT NULL DEFAULT 0')
   if (!userColumns.has('is_guest')) database.exec('ALTER TABLE users ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0')
+  if (!columns.has('is_gift_card')) database.exec('ALTER TABLE products ADD COLUMN is_gift_card INTEGER NOT NULL DEFAULT 0')
   if (!columns.has('extra_images')) database.exec("ALTER TABLE products ADD COLUMN extra_images TEXT NOT NULL DEFAULT '[]'")
   if (!columns.has('stock_by_size')) database.exec("ALTER TABLE products ADD COLUMN stock_by_size TEXT NOT NULL DEFAULT '{}' ")
   database.exec(`
@@ -330,16 +343,25 @@ const sendMail = async ({ to, subject, text, replyTo, fromName = 'UnFocus' }) =>
 }
 
 const formatArs = (value) => `$ ${Number(value).toLocaleString('es-AR')}`
-const shippingSummary = (order) => order.shipping_method === 'pickup'
+const shippingSummary = (order) => order.shipping_method === 'digital'
+  ? 'Producto digital: no requiere envío.'
+  : order.shipping_method === 'pickup'
   ? `Retiro en persona${storeSettings.pickupAddress ? `: ${storeSettings.pickupAddress}` : ''}`
   : `Envío a domicilio: ${[order.shipping_street, order.shipping_city, order.shipping_province, order.shipping_postal_code].filter(Boolean).join(', ')}`
+
+const giftCardLines = (orderId) => {
+  const cards = database.prepare('SELECT code, initial_ars FROM gift_cards WHERE order_id = ? ORDER BY id').all(orderId)
+  if (!cards.length) return ''
+  return `Tu tarjeta de regalo${cards.length > 1 ? 's' : ''} (canjeable${cards.length > 1 ? 's' : ''} en el checkout, sin vencimiento):\n${cards.map((card) => `- ${card.code} · ${formatArs(card.initial_ars)}`).join('\n')}\n\n`
+}
 
 const sendOrderEmail = async (orderId, kind) => {
   const order = database.prepare('SELECT o.*, u.name AS user_name, u.email AS user_email FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id = ?').get(orderId)
   if (!order) return false
-  const items = database.prepare('SELECT product_name, size, quantity, unit_price_ars FROM order_items WHERE order_id = ?').all(orderId)
-  const itemLines = items.map((item) => `- ${item.quantity} × ${item.product_name} (talle ${item.size}): ${formatArs(item.unit_price_ars * item.quantity)}`).join('\n')
-  const totals = `Envío: ${order.shipping_cost_ars ? formatArs(order.shipping_cost_ars) : 'Sin cargo'}\nTotal: ${formatArs(order.total_ars)}`
+  if (kind === 'paid') issueGiftCards(orderId)
+  const items = database.prepare('SELECT oi.product_name, oi.size, oi.quantity, oi.unit_price_ars, COALESCE(p.is_gift_card, 0) AS is_gift_card FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?').all(orderId)
+  const itemLines = items.map((item) => `- ${item.quantity} × ${item.product_name} (${item.is_gift_card ? 'tarjeta' : `talle ${item.size}`}): ${formatArs(item.unit_price_ars * item.quantity)}`).join('\n')
+  const totals = `${order.discount_ars ? `Descuento (${order.coupon_code}): -${formatArs(order.discount_ars)}\n` : ''}${order.gift_card_ars ? `Pagado con tarjeta de regalo: -${formatArs(order.gift_card_ars)}\n` : ''}Envío: ${order.shipping_cost_ars ? formatArs(order.shipping_cost_ars) : 'Sin cargo'}\nTotal: ${formatArs(order.total_ars)}`
   const greeting = `Hola ${order.user_name.split(' ')[0]},`
   const signature = '\nEquipo UnFocus\nSeeking clarity. Embrace yourself.'
   let subject
@@ -353,7 +375,7 @@ const sendOrderEmail = async (orderId, kind) => {
     body = `${greeting}\n\nRegistramos tu pedido ${order.reference}. Está pendiente de pago${order.status === 'pending_payment' ? ` y se cancelará automáticamente si no se completa en ${pendingOrderExpiryDays} días` : ''}.\n\n${itemLines}\n${totals}\n\n${shippingSummary(order)}\n\n${transferLines}`
   } else if (kind === 'paid') {
     subject = `Recibimos tu pago · Pedido ${order.reference}`
-    body = `${greeting}\n\nConfirmamos el pago de tu pedido ${order.reference}.\n\n${itemLines}\n${totals}\n\n${shippingSummary(order)}\n\nTe avisaremos por correo cuando lo despachemos.`
+    body = `${greeting}\n\nConfirmamos el pago de tu pedido ${order.reference}.\n\n${itemLines}\n${totals}\n\n${shippingSummary(order)}\n\n${giftCardLines(orderId)}Te avisaremos por correo cuando lo despachemos.`
   } else if (kind === 'shipped') {
     subject = `Tu pedido ${order.reference} ya fue despachado`
     const tracking = [order.carrier && `Transporte: ${order.carrier}`, order.tracking_code && `Código de seguimiento: ${order.tracking_code}`, order.tracking_url && `Seguimiento: ${order.tracking_url}`].filter(Boolean).join('\n')
@@ -394,6 +416,10 @@ const createSession = (response, userId) => {
   })
 }
 
+const giftCardPresetAmounts = [30000, 50000, 75000, 100000, 150000, 200000, 300000, 400000, 500000]
+const giftCardMinimumArs = 30000
+const giftCardMaximumArs = 1000000
+
 const parseExtraImages = (value) => {
   try {
     const parsed = JSON.parse(value || '[]')
@@ -426,6 +452,7 @@ const productFromRow = (row) => ({
   badge: row.badge,
   createdAt: row.created_at,
   sold: Number(row.sold ?? 0),
+  isGiftCard: Boolean(row.is_gift_card),
 })
 
 // sold = unidades en pedidos pagados; alimenta el orden por popularidad
@@ -475,6 +502,17 @@ const backfillSeedImages = async () => {
   for (const product of seed.products ?? seed) update.run(JSON.stringify(seedExtraImages(product)), product.slug)
 }
 await backfillSeedImages()
+
+// La tarjeta de regalo es un producto especial: su "talle" es el monto en ARS y no tiene stock.
+const ensureGiftCardProduct = () => {
+  if (database.prepare('SELECT id FROM products WHERE is_gift_card = 1').get()) return
+  const images = ['/gifts/tarjeta-1.svg', '/gifts/tarjeta-2.svg', '/gifts/tarjeta-3.svg']
+  database.prepare(`
+    INSERT INTO products (slug, name, category, price_ars, stock, stock_by_size, composition, features_json, description, design_description, front_image, front_alt, back_image, back_alt, badge, extra_images, is_gift_card)
+    VALUES ('tarjeta-de-regalo', 'Tarjeta de regalo', 'Regalos', ?, 0, '{}', 'Saldo digital', '[]', 'Regala libertad de elegir: recibes un código con el saldo que quieras para usar en cualquier compra de UnFocus.', 'Elige un monto entre $30.000 y $1.000.000. El código llega por correo apenas se confirma el pago y no vence.', ?, 'Tarjeta de regalo UnFocus', ?, 'Tarjeta de regalo UnFocus, versión oscura', 'REGALO', ?, 1)
+  `).run(giftCardMinimumArs, images[0], images[1], JSON.stringify([{ src: images[2], alt: 'Tarjeta de regalo UnFocus, versión coral' }]))
+}
+ensureGiftCardProduct()
 await bootstrapAdministrator()
 
 const app = express()
@@ -732,6 +770,7 @@ app.post('/api/auth/logout', (request, response) => {
 const persistImage = async (value) => {
   if (typeof value !== 'string') throw new Error('Cada vista necesita una imagen.')
   if (/^\/ident\/productos\/[a-zA-Z0-9_-]+\.jpg$/.test(value)) return value
+  if (/^\/gifts\/[a-zA-Z0-9_-]+\.svg$/.test(value)) return value
   if (/^\/uploads\/[a-zA-Z0-9_-]+\.(jpg|png|webp)$/.test(value)) return value
   const match = value.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/)
   if (!match) throw new Error('Formato de imagen no válido.')
@@ -854,6 +893,10 @@ const serializeOrder = (order, extra = {}) => ({
   },
   carrier: order.carrier ?? '',
   trackingCode: order.tracking_code ?? '',
+  couponCode: order.coupon_code ?? '',
+  discountArs: order.discount_ars ?? 0,
+  giftCardArs: order.gift_card_ars ?? 0,
+  giftCards: ['paid', 'shipped', 'delivered'].includes(order.status) ? database.prepare('SELECT code, initial_ars AS initialArs, balance_ars AS balanceArs FROM gift_cards WHERE order_id = ? ORDER BY id').all(order.id) : [],
   trackingUrl: order.tracking_url ?? '',
   shippedAt: order.shipped_at ?? null,
   items: database.prepare('SELECT product_name AS name, product_slug AS slug, image_url AS image, size, quantity, unit_price_ars AS unitPriceArs FROM order_items WHERE order_id = ?').all(order.id),
@@ -888,6 +931,19 @@ app.delete('/api/account/favorites/:productId', requireAuth, (request, response)
   response.json({ ok: true })
 })
 
+// Genera los códigos de las tarjetas de regalo compradas (una vez por pedido).
+const issueGiftCards = (orderId) => {
+  if (database.prepare('SELECT 1 FROM gift_cards WHERE order_id = ?').get(orderId)) return
+  const lines = database.prepare('SELECT oi.size, oi.quantity FROM order_items oi JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? AND p.is_gift_card = 1').all(orderId)
+  const insert = database.prepare('INSERT INTO gift_cards (code, initial_ars, balance_ars, order_id) VALUES (?, ?, ?, ?)')
+  for (const line of lines) {
+    for (let index = 0; index < line.quantity; index += 1) {
+      const hex = randomBytes(6).toString('hex').toUpperCase()
+      insert.run(`GC-${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8)}`, Number(line.size), Number(line.size), orderId)
+    }
+  }
+}
+
 const couponSelect = 'SELECT id, code, type, value, min_subtotal_ars AS minSubtotal, max_uses AS maxUses, uses, expires_at AS expiresAt, active, created_at AS createdAt FROM coupons'
 
 // Devuelve el cupón y el descuento aplicable al subtotal elegible o lanza un error legible.
@@ -914,13 +970,20 @@ const buildOrderFromItems = (items, userId) => {
     const productId = Number(item.productId)
     const quantity = Number(item.quantity)
     const productRow = selectProductById.get(productId)
-    if (!productRow || !Number.isInteger(quantity) || quantity < 1 || quantity > 20 || !allowedSizes.has(item.size)) throw new Error('Revisa los productos, cantidades y tallas del pedido.')
+    if (!productRow || !Number.isInteger(quantity) || quantity < 1 || quantity > 20 || (!productRow.is_gift_card && !allowedSizes.has(item.size))) throw new Error('Revisa los productos, cantidades y tallas del pedido.')
     const product = productFromRow(productRow)
+    if (product.isGiftCard) {
+      const amount = Number(item.size)
+      if (!Number.isInteger(amount) || amount < giftCardMinimumArs || amount > giftCardMaximumArs) throw new Error(`El monto de la tarjeta debe estar entre $${giftCardMinimumArs.toLocaleString('es-AR')} y $${giftCardMaximumArs.toLocaleString('es-AR')}.`)
+      total += amount * quantity
+      orderItems.push({ product, quantity, size: String(amount), unitPrice: amount })
+      continue
+    }
     const stockForSize = Number(product.stockBySize?.[item.size] ?? 0)
     if (stockForSize < quantity) throw new Error(`No hay stock suficiente para ${product.name} en talla ${item.size}.`)
     total += product.price * quantity
     eligibleSubtotal += product.price * quantity
-    orderItems.push({ product, quantity, size: item.size })
+    orderItems.push({ product, quantity, size: item.size, unitPrice: product.price })
   }
   const reference = `UF-${new Date().getFullYear()}-${randomBytes(3).toString('hex').toUpperCase()}`
   return { orderItems, total, eligibleSubtotal, reference, userId }
@@ -928,20 +991,38 @@ const buildOrderFromItems = (items, userId) => {
 
 const createOrderRecord = (request, items, shipping, { notify = true, paymentMethod = 'mercadopago' } = {}) => {
   const { orderItems, total: subtotal, eligibleSubtotal, reference, userId } = buildOrderFromItems(items, request.user.id)
-  const shippingDetails = parseShippingDetails(shipping, subtotal)
+  const digitalOnly = orderItems.every((item) => item.product.isGiftCard)
+  const shippingDetails = digitalOnly
+    ? { method: 'digital', name: cleanText(shipping?.name, 80) || request.user.name, phone: cleanText(shipping?.phone, 40), street: '', city: '', province: '', postalCode: '', notes: '', costArs: 0 }
+    : parseShippingDetails(shipping, subtotal)
   const { coupon, discount } = request.body?.couponCode ? evaluateCoupon(request.body.couponCode, eligibleSubtotal) : { coupon: null, discount: 0 }
-  const total = subtotal - discount + shippingDetails.costArs
+  const payable = subtotal - discount + shippingDetails.costArs
+  let giftCard = null
+  let giftApplied = 0
+  const giftCardCode = typeof request.body?.giftCardCode === 'string' ? request.body.giftCardCode.trim() : ''
+  if (giftCardCode) {
+    if (orderItems.some((item) => item.product.isGiftCard)) throw new Error('Una tarjeta de regalo no se puede pagar con otra tarjeta de regalo.')
+    giftCard = database.prepare('SELECT id, code, balance_ars AS balance FROM gift_cards WHERE code = ?').get(giftCardCode)
+    if (!giftCard || giftCard.balance <= 0) throw new Error('La tarjeta de regalo no es válida o no tiene saldo.')
+    giftApplied = Math.min(giftCard.balance, payable)
+  }
+  const total = payable - giftApplied
   try {
     database.exec('BEGIN IMMEDIATE')
-    const result = database.prepare('INSERT INTO orders (reference, user_id, total_ars, status, shipping_cost_ars, shipping_method, shipping_name, shipping_phone, shipping_street, shipping_city, shipping_province, shipping_postal_code, shipping_notes, payment_method, coupon_code, discount_ars) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(reference, userId, total, 'pending_payment', shippingDetails.costArs, shippingDetails.method, shippingDetails.name, shippingDetails.phone, shippingDetails.street, shippingDetails.city, shippingDetails.province, shippingDetails.postalCode, shippingDetails.notes, paymentMethod, coupon?.code ?? '', discount)
+    const result = database.prepare('INSERT INTO orders (reference, user_id, total_ars, status, shipping_cost_ars, shipping_method, shipping_name, shipping_phone, shipping_street, shipping_city, shipping_province, shipping_postal_code, shipping_notes, payment_method, coupon_code, discount_ars, gift_card_code, gift_card_ars) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(reference, userId, total, 'pending_payment', shippingDetails.costArs, shippingDetails.method, shippingDetails.name, shippingDetails.phone, shippingDetails.street, shippingDetails.city, shippingDetails.province, shippingDetails.postalCode, shippingDetails.notes, paymentMethod, coupon?.code ?? '', discount, giftCard?.code ?? '', giftApplied)
     const orderId = Number(result.lastInsertRowid)
     if (coupon) {
       const used = database.prepare('UPDATE coupons SET uses = uses + 1 WHERE id = ? AND (max_uses = 0 OR uses < max_uses)').run(coupon.id)
       if (!used.changes) throw new Error('coupon-exhausted')
     }
+    if (giftCard && giftApplied > 0) {
+      const spent = database.prepare('UPDATE gift_cards SET balance_ars = balance_ars - ? WHERE id = ? AND balance_ars >= ?').run(giftApplied, giftCard.id, giftApplied)
+      if (!spent.changes) throw new Error('giftcard-exhausted')
+    }
     const insertItem = database.prepare('INSERT INTO order_items (order_id, product_id, product_name, product_slug, image_url, size, quantity, unit_price_ars) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
     for (const item of orderItems) {
-      insertItem.run(orderId, item.product.id, item.product.name, item.product.slug, item.product.gallery?.[0]?.src ?? '', item.size, item.quantity, item.product.price)
+      insertItem.run(orderId, item.product.id, item.product.name, item.product.slug, item.product.gallery?.[0]?.src ?? '', item.size, item.quantity, item.unitPrice)
+      if (item.product.isGiftCard) continue
       const existingStock = JSON.parse(selectProductById.get(item.product.id).stock_by_size || '{}')
       const nextSizeStock = Math.max(0, Number(existingStock[item.size] ?? 0) - item.quantity)
       existingStock[item.size] = nextSizeStock
@@ -950,22 +1031,26 @@ const createOrderRecord = (request, items, shipping, { notify = true, paymentMet
     }
     if (notify) createNotification(userId, 'order_created', 'Pedido registrado', `Tu pedido ${reference} quedó registrado y está pendiente de pago.`)
     database.exec('COMMIT')
-    return { order: { id: orderId, reference, totalArs: total, discountArs: discount, shippingCostArs: shippingDetails.costArs, status: 'pending_payment' } }
+    return { order: { id: orderId, reference, totalArs: total, discountArs: discount, giftCardArs: giftApplied, lineItems: orderItems.map((item) => ({ id: String(item.product.id), title: item.product.name, description: item.product.isGiftCard ? 'Tarjeta de regalo' : `Talla ${item.size}`, quantity: item.quantity, unit_price: item.unitPrice, currency_id: 'ARS' })), shippingCostArs: shippingDetails.costArs, status: 'pending_payment' } }
   } catch (error) {
     database.exec('ROLLBACK')
-    throw new Error(error.message === 'coupon-exhausted' ? 'El cupón alcanzó su límite de usos.' : 'No se pudo registrar el pedido.')
+    throw new Error(error.message === 'coupon-exhausted' ? 'El cupón alcanzó su límite de usos.' : error.message === 'giftcard-exhausted' ? 'La tarjeta de regalo ya no tiene saldo suficiente.' : 'No se pudo registrar el pedido.')
   }
 }
 
 // direction: 1 devuelve stock al inventario, -1 lo vuelve a descontar
 const adjustOrderStock = (orderId, direction) => {
-  const used = database.prepare('SELECT coupon_code FROM orders WHERE id = ?').get(orderId)
+  const used = database.prepare('SELECT coupon_code, gift_card_code, gift_card_ars FROM orders WHERE id = ?').get(orderId)
   if (used?.coupon_code) database.prepare('UPDATE coupons SET uses = MAX(0, uses - ?) WHERE code = ?').run(direction, used.coupon_code)
+  if (used?.gift_card_code && used.gift_card_ars) database.prepare('UPDATE gift_cards SET balance_ars = MAX(0, balance_ars + ?) WHERE code = ?').run(direction * used.gift_card_ars, used.gift_card_code)
+  // Las tarjetas emitidas por este pedido se anulan al cancelarlo y se rehabilitan si se reactiva.
+  if (direction === 1) database.prepare('UPDATE gift_cards SET balance_ars = 0 WHERE order_id = ?').run(orderId)
+  else database.prepare('UPDATE gift_cards SET balance_ars = initial_ars WHERE order_id = ?').run(orderId)
   const items = database.prepare('SELECT product_id, size, quantity FROM order_items WHERE order_id = ?').all(orderId)
   for (const item of items) {
     if (!item.product_id) continue
     const product = selectProductById.get(item.product_id)
-    if (!product) continue
+    if (!product || product.is_gift_card) continue
     const stockBySize = JSON.parse(product.stock_by_size || '{}')
     const delta = direction * Number(item.quantity)
     stockBySize[item.size] = Math.max(0, Number(stockBySize[item.size] ?? 0) + delta)
@@ -1019,6 +1104,25 @@ const cancelExpiredPendingOrders = () => {
 }
 cancelExpiredPendingOrders()
 setInterval(cancelExpiredPendingOrders, 60 * 60 * 1000).unref()
+
+app.post('/api/gift-cards/validate', limitAuthAttempts, (request, response) => {
+  const code = typeof request.body?.code === 'string' ? request.body.code.trim() : ''
+  const card = code ? database.prepare('SELECT code, balance_ars AS balanceArs FROM gift_cards WHERE code = ?').get(code) : null
+  if (!card || card.balanceArs <= 0) return response.status(400).json({ error: 'La tarjeta de regalo no es válida o no tiene saldo.' })
+  response.json(card)
+})
+
+app.get('/api/admin/gift-cards', requireAdmin, (_request, response) => {
+  response.json({ giftCards: database.prepare('SELECT g.id, g.code, g.initial_ars AS initialArs, g.balance_ars AS balanceArs, g.created_at AS createdAt, o.reference AS orderReference FROM gift_cards g LEFT JOIN orders o ON o.id = g.order_id ORDER BY g.id DESC').all() })
+})
+
+// Pedidos cubiertos por descuentos o tarjetas de regalo: no hay nada que cobrar.
+const markOrderPaidWithoutCharge = (order, userId) => {
+  database.prepare("UPDATE orders SET status = 'paid' WHERE id = ?").run(order.id)
+  order.status = 'paid'
+  createNotification(userId, 'order_paid', 'Compra confirmada', `Tu pedido ${order.reference} fue confirmado.`)
+  void sendOrderEmail(order.id, 'paid')
+}
 
 app.post('/api/coupons/validate', (request, response) => {
   try {
@@ -1081,6 +1185,10 @@ app.post('/api/orders', resolveCheckoutUser, (request, response) => {
     if (!transferDetails()) throw new Error('Las transferencias no están disponibles por el momento.')
     const result = createOrderRecord(request, request.body.items, request.body.shipping, { paymentMethod: 'transfer' })
     result.order.paymentMethod = 'transfer'
+    if (result.order.totalArs <= 0) {
+      markOrderPaidWithoutCharge(result.order, request.user.id)
+      return response.status(201).json(result)
+    }
     result.order.transfer = transferDetails()
     void sendOrderEmail(result.order.id, 'created')
     response.status(201).json(result)
@@ -1314,30 +1422,16 @@ app.post('/api/payments/create-preference', resolveCheckoutUser, async (request,
     if (request.body.acceptTerms !== true) throw new Error('Debes aceptar los términos y condiciones para continuar.')
     order = createOrderRecord(request, request.body.items, request.body.shipping, { notify: false })
     if (order.order.totalArs <= 0) {
-      // Total cubierto por descuentos: no hay nada que cobrar en Mercado Pago.
-      database.prepare("UPDATE orders SET status = 'paid' WHERE id = ?").run(order.order.id)
-      createNotification(request.user.id, 'order_paid', 'Compra confirmada', `Tu pedido ${order.order.reference} fue confirmado.`)
-      void sendOrderEmail(order.order.id, 'paid')
-      return response.json({ order: { ...order.order, status: 'paid' }, paymentUrl: null, initPoint: null })
+      markOrderPaidWithoutCharge(order.order, request.user.id)
+      return response.json({ order: order.order, paymentUrl: null, initPoint: null })
     }
     const baseUrl = process.env.MP_RETURN_URL?.trim() || publicBaseUrl
     const webhookUrl = process.env.MP_WEBHOOK_URL || (isProduction ? new URL('/api/payments/webhook', publicBaseUrl).toString() : null)
     const preference = new Preference(mercadoPagoClient)
-    const items = request.body.items.map((item) => {
-      const product = selectProductById.get(Number(item.productId))
-      if (!product) throw new Error('Producto no encontrado.')
-      return {
-        id: String(product.id),
-        title: product.name,
-        description: `Talla ${item.size}`,
-        quantity: Number(item.quantity),
-        unit_price: Number(product.price_ars),
-        currency_id: 'ARS',
-      }
-    })
-    if (order.order.discountArs > 0) {
+    const items = order.order.lineItems.map((line) => ({ ...line }))
+    if (order.order.discountArs > 0 || order.order.giftCardArs > 0) {
       // Mercado Pago no admite precios negativos: se envía un único ítem con el total ya descontado.
-      items.splice(0, items.length, { id: order.order.reference, title: `Pedido ${order.order.reference} (con descuento)`, quantity: 1, unit_price: order.order.totalArs, currency_id: 'ARS' })
+      items.splice(0, items.length, { id: order.order.reference, title: `Pedido ${order.order.reference} (con descuentos)`, quantity: 1, unit_price: order.order.totalArs, currency_id: 'ARS' })
     } else if (order.order.shippingCostArs > 0) {
       items.push({ id: 'shipping', title: 'Envío a domicilio', quantity: 1, unit_price: order.order.shippingCostArs, currency_id: 'ARS' })
     }

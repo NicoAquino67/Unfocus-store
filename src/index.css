@@ -55,3 +55,8 @@ img { display: block; max-width: 100%; }
 .checkout-form__coupon { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; }
 .checkout-form__coupon p { grid-column: 1 / -1; margin: 0; font-size: .8rem; }
 .checkout-form__coupon button { min-height: 40px; padding: 0 16px; border: 1px solid currentColor; background: none; cursor: pointer; }
+
+.product-detail__amount-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.product-detail__custom-amount { display: grid; gap: 6px; margin-top: 14px; font-size: .85rem; }
+.product-detail__custom-amount input { min-height: 42px; padding: 0 12px; border: 1px solid rgba(0,0,0,.25); font: inherit; }
+.product-detail__gift-note { margin: 12px 0; font-size: .9rem; }

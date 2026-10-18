@@ -48,6 +48,10 @@ export type AccountOrder = {
   trackingUrl: string
   shippedAt: string | null
   items: AccountOrderItem[]
+  couponCode?: string
+  discountArs?: number
+  giftCardArs?: number
+  giftCards?: { code: string; initialArs: number; balanceArs: number }[]
 }
 
 export type AccountNotification = {

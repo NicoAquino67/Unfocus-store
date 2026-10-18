@@ -3,7 +3,7 @@ import mindUnfilteredBack from '../ident/productos/mind-unfiltered-espalda.jpg'
 import noMolestarFront from '../ident/productos/no-molestar-frente.jpg'
 import noMolestarBack from '../ident/productos/no-molestar-espalda.jpg'
 
-export type Category = 'Camisetas'
+export type Category = 'Camisetas' | 'Regalos'
 export type DisplayCurrency = 'ARS' | 'USD'
 
 export type Product = {
@@ -23,6 +23,7 @@ export type Product = {
   stockBySize?: Record<string, number>
   createdAt?: string
   sold?: number
+  isGiftCard?: boolean
 }
 
 export const garmentCuts = ['Oversize', 'Regular fit', 'Slim', 'Unisex'] as const
@@ -63,10 +64,17 @@ export const initialProducts: Product[] = [
 ]
 
 export const sizes = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL']
-export const categories = ['Todo', 'Camisetas'] as const
+export const categories = ['Todo', 'Camisetas', 'Regalos'] as const
 export type CategoryFilter = (typeof categories)[number]
 
-export const getStockForSize = (product: Product, size: string) => Number(product.stockBySize?.[size] ?? 0)
+export const giftCardAmounts = [30000, 50000, 75000, 100000, 150000, 200000, 300000, 400000, 500000]
+export const giftCardMinimum = 30000
+export const giftCardMaximum = 1000000
+export const isValidGiftCardAmount = (value: string) => /^\d+$/.test(value) && Number(value) >= giftCardMinimum && Number(value) <= giftCardMaximum
+
+// En las tarjetas de regalo el "talle" es el monto en ARS y no hay stock que agotar.
+export const getDefaultSize = (product: Product) => product.isGiftCard ? '50000' : 'M'
+export const getStockForSize = (product: Product, size: string) => product.isGiftCard ? 999 : Number(product.stockBySize?.[size] ?? 0)
 
 export const formatPrice = (price: number, currency: DisplayCurrency = 'ARS', usdArsRate: number | null = null) => {
   const canConvert = currency === 'USD' && usdArsRate !== null && usdArsRate > 0

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowLeft, Check, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import AdminCoupons from './AdminCoupons'
+import AdminGiftCards from './AdminGiftCards'
 import { apiRequest, type AdminOrder, type AdminSummary, type ContactMessage, type NewsletterSubscriber, type OrderStatus, type StoreSettings } from './api'
 import { formatPrice, getProductFacets, getProductImage, garmentCuts, productAudiences, productGenders, productFacetTag, sizes, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
 import './ProductAdmin.css'
@@ -174,7 +175,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
       id: draft.id ?? Math.max(0, ...products.map((item) => item.id)) + 1,
       slug: existingProduct?.slug ?? (hasSlugConflict ? `${baseSlug}-${Date.now().toString(36)}` : baseSlug),
       name,
-      category: 'Camisetas',
+      category: existingProduct?.category ?? 'Camisetas',
       price: Number(draft.price),
       alt: `Camiseta UnFocus ${name}`,
       features: [
@@ -413,6 +414,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
           )}
 
           <AdminCoupons />
+          <AdminGiftCards />
 
           <section className="admin-newsletter-panel" aria-labelledby="admin-newsletter-title">
             <div className="admin-order-panel__header"><div><p className="eyebrow">Newsletter</p><h3 id="admin-newsletter-title">Suscriptores <span>({newsletterSubscribers.length})</span></h3></div></div>

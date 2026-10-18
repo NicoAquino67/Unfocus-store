@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1250" role="img" aria-label="Tarjeta de regalo UnFocus">
+  <rect width="1000" height="1250" fill="#141414"/>
+  <rect x="120" y="360" width="760" height="480" rx="28" fill="#f4efe6"/>
+  <circle cx="780" cy="470" r="70" fill="#ff6b4a" opacity=".9"/>
+  <rect x="170" y="700" width="340" height="14" rx="7" fill="#ff6b4a"/>
+  <rect x="170" y="740" width="220" height="14" rx="7" fill="#ff6b4a" opacity=".6"/>
+  <text x="170" y="500" font-family="Helvetica, Arial, sans-serif" font-size="64" font-weight="700" fill="#141414" letter-spacing="6">UNFOCUS</text>
+  <text x="170" y="570" font-family="Helvetica, Arial, sans-serif" font-size="30" fill="#141414" opacity=".8" letter-spacing="4">GIFT CARD</text>
+  <text x="500" y="1000" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="28" fill="#f4efe6" opacity=".7" letter-spacing="5">SEEKING CLARITY. EMBRACE YOURSELF.</text>
+</svg>
