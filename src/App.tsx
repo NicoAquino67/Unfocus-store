@@ -207,8 +207,8 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
               {sizes.map((size) => {
                 const outOfStock = getStockForSize(product, size) <= 0
                 return (
-                  <button className={selectedSize === size ? 'is-active' : ''} key={size} type="button" onClick={() => onSizeChange(size)} disabled={outOfStock} aria-pressed={selectedSize === size} aria-label={`${size} ${argentineSizeEquivalents[size]}${outOfStock ? ' Sin stock' : ''}`}>
-                    <span><strong>{size}</strong><small>{argentineSizeEquivalents[size]}</small></span>
+                  <button className={selectedSize === size ? 'is-active' : ''} key={size} type="button" onClick={() => onSizeChange(size)} disabled={outOfStock} aria-pressed={selectedSize === size}>
+                    <span><strong>{size}</strong> <small>{argentineSizeEquivalents[size]}</small></span>
                     {outOfStock && <small className="product-detail__size-stock">Sin stock</small>}
                   </button>
                 )
