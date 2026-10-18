@@ -1,6 +1,6 @@
-export type LegalPageKey = 'terminos' | 'privacidad' | 'cambios' | 'arrepentimiento' | 'defensa' | 'baja'
+export type LegalPageKey = 'terminos' | 'privacidad' | 'cambios' | 'arrepentimiento' | 'defensa' | 'baja' | 'faq'
 
-export const legalPageKeys: LegalPageKey[] = ['terminos', 'privacidad', 'cambios', 'arrepentimiento', 'defensa', 'baja']
+export const legalPageKeys: LegalPageKey[] = ['terminos', 'privacidad', 'cambios', 'arrepentimiento', 'defensa', 'baja', 'faq']
 
 export const legalPageTitles: Record<LegalPageKey, string> = {
   terminos: 'Términos y condiciones',
@@ -9,4 +9,5 @@ export const legalPageTitles: Record<LegalPageKey, string> = {
   arrepentimiento: 'Botón de arrepentimiento',
   defensa: 'Defensa del consumidor',
   baja: 'Botón de baja',
+  faq: 'Preguntas y respuestas',
 }

@@ -20,3 +20,7 @@
   .legal-page__nav button { white-space: nowrap; border-left: 0; border-bottom: 2px solid var(--line); }
   .legal-page__nav button.is-active { border-bottom-color: var(--brand-blue); }
 }
+
+.faq-item { border-bottom: 1px solid var(--line); padding: 12px 0; }
+.faq-item summary { cursor: pointer; font-weight: 700; }
+.faq-item p { margin: 8px 0 0; color: #555; line-height: 1.55; }

@@ -55,6 +55,35 @@ function RegretForm({ store }: { store: StoreConfig['store'] | null }) {
   )
 }
 
+const faqItems: { question: string; answer: ReactNode }[] = [
+  { question: '¿Cómo puedo pagar?', answer: 'Con Mercado Pago (tarjetas de crédito y débito, dinero en cuenta, cuotas según tu tarjeta) o por transferencia bancaria.' },
+  { question: '¿Puedo pagar en cuotas?', answer: 'Sí. Las cuotas disponibles las ves al pagar en Mercado Pago, según tu tarjeta y banco.' },
+  { question: '¿Cómo pago por transferencia?', answer: 'Elige «Transferencia bancaria» al finalizar el pedido, transfiere el total con el código del pedido como concepto y envíanos el comprobante por correo. Confirmamos el pago manualmente.' },
+  { question: '¿Necesito una cuenta para comprar?', answer: 'No. Puedes comprar como invitado con tu correo. Con una cuenta ves el historial y retomas pagos pendientes.' },
+  { question: '¿Cuánto tarda y cuánto cuesta el envío?', answer: 'El costo se muestra antes de pagar y puede ser gratis desde cierto monto. Los plazos dependen del transporte y de tu zona. También puedes retirar en persona, si está disponible.' },
+  { question: '¿Cómo sigo mi pedido?', answer: 'Cuando lo despachamos te enviamos el transporte y el código de seguimiento por correo y en tu cuenta (si compraste como invitado, solo por correo).' },
+  { question: '¿Cómo elijo mi talle?', answer: 'Cada producto tiene una guía de talles con medidas en centímetros. Si dudas entre dos, elige el mayor para un calce más holgado.' },
+  { question: 'Mi pago fue rechazado, ¿qué hago?', answer: 'Tu pedido queda pendiente y reservamos el stock. Desde tu cuenta puedes reintentar el pago. Tras varios rechazos, o pasados 3 días sin pago, el pedido se cancela y el stock se libera.' },
+  { question: '¿Puedo cambiar una prenda?', answer: 'Sí, dentro de los 30 días corridos desde que la recibes, sin uso y con etiquetas. Escríbenos con tu número de pedido.' },
+  { question: '¿Puedo arrepentirme de mi compra?', answer: 'Sí, tienes 10 días corridos desde la recepción para revocarla sin dar motivos, desde el botón de arrepentimiento.' },
+  { question: '¿Cómo uso un cupón o una tarjeta de regalo?', answer: 'Ingresa el código en el último paso de la compra. Las tarjetas de regalo se pagan con saldo y cubren total o parcialmente el pedido; el saldo restante se paga con otro medio.' },
+  { question: '¿Cómo me doy de baja del newsletter o de mi cuenta?', answer: 'Desde el botón de baja, en el pie de la página.' },
+]
+
+function FaqList({ onOpenContact }: { onOpenContact: () => void }) {
+  return (
+    <div className="faq-list">
+      {faqItems.map((item) => (
+        <details key={item.question} className="faq-item">
+          <summary>{item.question}</summary>
+          <p>{item.answer}</p>
+        </details>
+      ))}
+      <p className="legal-page__small">¿No encuentras tu respuesta? <button type="button" onClick={onOpenContact}>Escríbenos</button>.</p>
+    </div>
+  )
+}
+
 function UnsubscribeForms({ store }: { store: StoreConfig['store'] | null }) {
   const [feedback, setFeedback] = useState<{ message: string; isError?: boolean } | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -186,6 +215,11 @@ function LegalPages({ page, store, onBack, onOpenPage, onOpenContact }: LegalPag
         <RegretForm store={store} />
       </>
     ),
+    faq: (
+      <>
+        <FaqList onOpenContact={onOpenContact} />
+      </>
+    ),
     defensa: (
       <>
         <h2>Tus derechos como consumidor</h2>
@@ -214,7 +248,7 @@ function LegalPages({ page, store, onBack, onOpenPage, onOpenContact }: LegalPag
           {legalPageKeys.map((key) => <button key={key} type="button" className={key === page ? 'is-active' : ''} aria-current={key === page ? 'page' : undefined} onClick={() => onOpenPage(key)}>{legalPageTitles[key]}</button>)}
         </nav>
         <article className="legal-page__body">
-          <p className="eyebrow">UnFocus · Información legal</p>
+          <p className="eyebrow">{page === 'faq' ? 'UnFocus · Ayuda' : 'UnFocus · Información legal'}</p>
           <h1 id="legal-title">{legalPageTitles[page]}</h1>
           {content[page]}
         </article>
