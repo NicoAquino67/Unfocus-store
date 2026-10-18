@@ -4,7 +4,7 @@ import { apiRequest, type AccountUser, type ShippingDetails, type StoreConfig } 
 
 export type PaymentMethod = 'mercadopago' | 'transfer'
 export type GuestDetails = { name: string; email: string; phone: string }
-export type CheckoutPayload = { shipping: ShippingDetails; acceptTerms: boolean; paymentMethod: PaymentMethod; guest?: GuestDetails }
+export type CheckoutPayload = { shipping: ShippingDetails; acceptTerms: boolean; paymentMethod: PaymentMethod; guest?: GuestDetails; couponCode?: string }
 import { calculateShipping } from './shipping'
 import { formatPrice, type DisplayCurrency } from './catalog'
 
@@ -13,6 +13,7 @@ const provinces = ['Buenos Aires', 'Ciudad Autónoma de Buenos Aires', 'Catamarc
 type CheckoutFormProps = {
   user: AccountUser | null
   subtotal: number
+  items: { productId: number; size: string; quantity: number }[]
   shipping: StoreConfig['shipping'] | null
   transfer: StoreConfig['transfer']
   currency: DisplayCurrency
@@ -24,8 +25,11 @@ type CheckoutFormProps = {
   onSubmit: (payload: CheckoutPayload) => void
 }
 
-function CheckoutForm({ user, subtotal, shipping, transfer, currency, usdArsRate, isSubmitting, onBack, onOpenTerms, onRequestLogin, onSubmit }: CheckoutFormProps) {
+function CheckoutForm({ user, subtotal, items, shipping, transfer, currency, usdArsRate, isSubmitting, onBack, onOpenTerms, onRequestLogin, onSubmit }: CheckoutFormProps) {
   const [form, setForm] = useState<ShippingDetails>({ method: 'delivery', name: user?.name ?? '', phone: user?.phone ?? '', street: '', city: '', province: '', postalCode: '', notes: '' })
+  const [couponInput, setCouponInput] = useState('')
+  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discountArs: number } | null>(null)
+  const [couponMessage, setCouponMessage] = useState('')
   const [guestEmail, setGuestEmail] = useState('')
   const [acceptTerms, setAcceptTerms] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('mercadopago')
@@ -45,7 +49,19 @@ function CheckoutForm({ user, subtotal, shipping, transfer, currency, usdArsRate
     return () => { isCurrent = false }
   }, [canPickup, isGuest])
 
-  const shippingCost = calculateShipping(subtotal, form.method, shipping)
+  const discount = Math.min(appliedCoupon?.discountArs ?? 0, subtotal)
+  const shippingCost = calculateShipping(subtotal - discount, form.method, shipping)
+  const applyCoupon = async () => {
+    setCouponMessage('')
+    try {
+      const result = await apiRequest<{ code: string; discountArs: number }>('/api/coupons/validate', { method: 'POST', body: JSON.stringify({ code: couponInput, items }) })
+      setAppliedCoupon(result)
+      setCouponMessage(`Cupón ${result.code} aplicado.`)
+    } catch (requestError) {
+      setAppliedCoupon(null)
+      setCouponMessage(requestError instanceof Error ? requestError.message : 'No se pudo validar el código.')
+    }
+  }
   const update = (field: keyof ShippingDetails, value: string) => setForm((current) => ({ ...current, [field]: value }))
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -53,6 +69,7 @@ function CheckoutForm({ user, subtotal, shipping, transfer, currency, usdArsRate
       shipping: form,
       acceptTerms,
       paymentMethod: paymentMethod === 'transfer' && !transfer ? 'mercadopago' : paymentMethod,
+      ...(appliedCoupon ? { couponCode: appliedCoupon.code } : {}),
       ...(isGuest ? { guest: { name: form.name, email: guestEmail, phone: form.phone } } : {}),
     })
   }
@@ -64,8 +81,8 @@ function CheckoutForm({ user, subtotal, shipping, transfer, currency, usdArsRate
       <h3>Datos de entrega</h3>
       {isGuest && (
         <div className="checkout-form__guest">
-          <p>Compras como invitado: no necesitas crear una cuenta. <button type="button" onClick={onRequestLogin}>?Ya tienes cuenta? Inicia sesi?n</button></p>
-          <label><span>Correo electr?nico</span><input required type="email" maxLength={254} autoComplete="email" value={guestEmail} onChange={(event) => setGuestEmail(event.target.value)} /></label>
+          <p>Compras como invitado: no necesitas crear una cuenta. <button type="button" onClick={onRequestLogin}>¿Ya tienes cuenta? Inicia sesión</button></p>
+          <label><span>Correo electrónico</span><input required type="email" maxLength={254} autoComplete="email" value={guestEmail} onChange={(event) => setGuestEmail(event.target.value)} /></label>
         </div>
       )}
       {canPickup && (
@@ -89,10 +106,16 @@ function CheckoutForm({ user, subtotal, shipping, transfer, currency, usdArsRate
         </>
       )}
       <label><span>Indicaciones (opcional)</span><textarea rows={2} maxLength={200} value={form.notes} onChange={(event) => update('notes', event.target.value)} placeholder="Horario, referencias, timbre…" /></label>
+      <div className="checkout-form__coupon">
+        <label><span>Código de descuento</span><input value={couponInput} maxLength={30} onChange={(event) => { setCouponInput(event.target.value.toUpperCase()); setAppliedCoupon(null) }} placeholder="Opcional" /></label>
+        <button type="button" disabled={!couponInput.trim()} onClick={() => { void applyCoupon() }}>Aplicar</button>
+        {couponMessage && <p role="status">{couponMessage}</p>}
+      </div>
       <dl className="checkout-form__totals">
         <div><dt>Subtotal</dt><dd>{formatPrice(subtotal, currency, usdArsRate)}</dd></div>
+        {discount > 0 && <div><dt>Descuento ({appliedCoupon?.code})</dt><dd>-{formatPrice(discount, currency, usdArsRate)}</dd></div>}
         <div><dt>{isDelivery ? 'Envío' : 'Retiro'}</dt><dd>{shippingCost > 0 ? formatPrice(shippingCost, currency, usdArsRate) : 'Sin cargo'}</dd></div>
-        <div className="checkout-form__total"><dt>Total</dt><dd>{formatPrice(subtotal + shippingCost, currency, usdArsRate)}</dd></div>
+        <div className="checkout-form__total"><dt>Total</dt><dd>{formatPrice(subtotal - discount + shippingCost, currency, usdArsRate)}</dd></div>
       </dl>
       {isDelivery && shipping && shipping.freeThresholdArs > 0 && shippingCost > 0 && <p className="checkout-form__hint">Envío gratis desde {formatPrice(shipping.freeThresholdArs, currency, usdArsRate)}.</p>}
       {transfer && (

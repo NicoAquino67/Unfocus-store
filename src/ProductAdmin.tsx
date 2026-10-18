@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowLeft, Check, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+import AdminCoupons from './AdminCoupons'
 import { apiRequest, type AdminOrder, type AdminSummary, type ContactMessage, type NewsletterSubscriber, type OrderStatus, type StoreSettings } from './api'
 import { formatPrice, getProductFacets, getProductImage, garmentCuts, productAudiences, productGenders, productFacetTag, sizes, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
 import './ProductAdmin.css'
@@ -166,7 +167,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
         .filter(([, value]) => Number.isInteger(value) && value >= 0),
     )
     if (draft.images.length < minProductImages) {
-      setFormError(`Sube al menos ${minProductImages} im?genes (m?ximo ${maxProductImages}).`)
+      setFormError(`Sube al menos ${minProductImages} imágenes (máximo ${maxProductImages}).`)
       return
     }
     const product: Product = {
@@ -320,7 +321,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
           </div>
 
           <div className="admin-field admin-field--wide">
-            <span>Im?genes del producto ({draft.images.length}/{maxProductImages}, m?nimo {minProductImages}). La primera es el frente y la segunda la espalda.</span>
+            <span>Imágenes del producto ({draft.images.length}/{maxProductImages}, mínimo {minProductImages}). La primera es el frente y la segunda la espalda.</span>
             <div className="admin-upload-grid">
               {draft.images.map((image, index) => (
                 <div className="admin-upload" key={`${index}-${image.slice(-24)}`}>
@@ -332,9 +333,9 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
               ))}
               {draft.images.length < maxProductImages && (
                 <label className="admin-upload">
-                  <span className="admin-upload__label">A?adir im?genes</span>
+                  <span className="admin-upload__label">Añadir imágenes</span>
                   <span className="admin-upload__preview"><ImagePlus size={26} strokeWidth={1.5} aria-hidden="true" /></span>
-                  <span className="admin-upload__action"><ImagePlus size={15} aria-hidden="true" /> {processingImage ? 'Procesando?' : 'Subir im?genes'}</span>
+                  <span className="admin-upload__action"><ImagePlus size={15} aria-hidden="true" /> {processingImage ? 'Procesando…' : 'Subir imágenes'}</span>
                   <input type="file" accept="image/*" multiple disabled={processingImage} onChange={(event) => { void handleImages(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = '' }} />
                   <span className="admin-upload__hint">Se optimizan al subirlas.</span>
                 </label>
@@ -410,6 +411,8 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
               <div className="admin-editor__footer"><button className="button button--coral" type="submit"><Check size={16} aria-hidden="true" /> Guardar configuración</button></div>
             </form>
           )}
+
+          <AdminCoupons />
 
           <section className="admin-newsletter-panel" aria-labelledby="admin-newsletter-title">
             <div className="admin-order-panel__header"><div><p className="eyebrow">Newsletter</p><h3 id="admin-newsletter-title">Suscriptores <span>({newsletterSubscribers.length})</span></h3></div></div>

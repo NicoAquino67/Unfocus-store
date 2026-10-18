@@ -159,10 +159,26 @@ const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().m
     tracking_url: 'TEXT',
     shipped_at: 'TEXT',
     payment_method: "TEXT NOT NULL DEFAULT 'mercadopago'",
+    coupon_code: "TEXT NOT NULL DEFAULT ''",
+    discount_ars: 'INTEGER NOT NULL DEFAULT 0',
   }
   for (const [column, definition] of Object.entries(orderColumnDefinitions)) {
     if (!orderColumns.has(column)) database.exec(`ALTER TABLE orders ADD COLUMN ${column} ${definition}`)
   }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS coupons (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      type TEXT NOT NULL CHECK (type IN ('percent', 'fixed')),
+      value INTEGER NOT NULL CHECK (value > 0),
+      min_subtotal_ars INTEGER NOT NULL DEFAULT 0,
+      max_uses INTEGER NOT NULL DEFAULT 0,
+      uses INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `)
   database.exec(`
     CREATE TABLE IF NOT EXISTS payment_attempts (
       payment_id TEXT PRIMARY KEY,
@@ -557,18 +573,18 @@ const limitAuthAttempts = (request, response, next) => {
   next()
 }
 
-// Permite comprar sin cuenta: crea (o reutiliza) un usuario "invitado" que no puede iniciar sesi?n.
+// Permite comprar sin cuenta: crea (o reutiliza) un usuario "invitado" que no puede iniciar sesión.
 const resolveCheckoutUser = (request, response, next) => {
   if (request.user) return next()
   const guest = request.body?.guest
   const name = typeof guest?.name === 'string' ? guest.name.trim() : ''
   const email = typeof guest?.email === 'string' ? guest.email.trim().toLowerCase() : ''
   const phone = typeof guest?.phone === 'string' ? guest.phone.trim().slice(0, 40) : ''
-  if (!guest) return response.status(401).json({ error: 'Inicia sesi?n o contin?a como invitado para comprar.' })
+  if (!guest) return response.status(401).json({ error: 'Inicia sesión o continúa como invitado para comprar.' })
   if (name.length < 2 || name.length > 80) return response.status(400).json({ error: 'Escribe tu nombre para continuar como invitado.' })
-  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return response.status(400).json({ error: 'Escribe un correo v?lido para recibir la confirmaci?n.' })
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return response.status(400).json({ error: 'Escribe un correo válido para recibir la confirmación.' })
   const existing = database.prepare('SELECT id, is_guest FROM users WHERE email = ?').get(email)
-  if (existing && !existing.is_guest) return response.status(409).json({ error: 'Ese correo ya tiene una cuenta. Inicia sesi?n para continuar.' })
+  if (existing && !existing.is_guest) return response.status(409).json({ error: 'Ese correo ya tiene una cuenta. Inicia sesión para continuar.' })
   let userId = existing?.id
   if (userId) database.prepare('UPDATE users SET name = ?, phone = ? WHERE id = ?').run(name, phone, userId)
   else userId = Number(database.prepare("INSERT INTO users (name, email, phone, password_hash, is_guest) VALUES (?, ?, ?, 'guest', 1)").run(name, email, phone).lastInsertRowid)
@@ -680,7 +696,7 @@ app.post('/api/auth/register', limitAuthAttempts, async (request, response) => {
   if (existingUser && !existingUser.is_guest) return response.status(409).json({ error: 'Ya existe una cuenta con ese correo.' })
   try {
     const passwordHash = await hashPassword(password)
-    // Si el correo ya compr? como invitado, la cuenta nueva hereda ese historial de pedidos.
+    // Si el correo ya compró como invitado, la cuenta nueva hereda ese historial de pedidos.
     const userId = existingUser
       ? (database.prepare('UPDATE users SET name = ?, phone = ?, password_hash = ?, is_guest = 0 WHERE id = ?').run(name, phone, passwordHash, existingUser.id), existingUser.id)
       : Number(database.prepare('INSERT INTO users (name, email, phone, password_hash) VALUES (?, ?, ?, ?)').run(name, email, phone, passwordHash).lastInsertRowid)
@@ -872,11 +888,28 @@ app.delete('/api/account/favorites/:productId', requireAuth, (request, response)
   response.json({ ok: true })
 })
 
+const couponSelect = 'SELECT id, code, type, value, min_subtotal_ars AS minSubtotal, max_uses AS maxUses, uses, expires_at AS expiresAt, active, created_at AS createdAt FROM coupons'
+
+// Devuelve el cupón y el descuento aplicable al subtotal elegible o lanza un error legible.
+const evaluateCoupon = (rawCode, eligibleSubtotal) => {
+  const code = typeof rawCode === 'string' ? rawCode.trim() : ''
+  const coupon = code ? database.prepare(`${couponSelect} WHERE code = ?`).get(code) : null
+  if (!coupon || !coupon.active) throw new Error('El código de descuento no es válido.')
+  if (coupon.expiresAt && new Date(`${coupon.expiresAt}T23:59:59`).getTime() < Date.now()) throw new Error('El código de descuento venció.')
+  if (coupon.maxUses > 0 && coupon.uses >= coupon.maxUses) throw new Error('El código de descuento alcanzó su límite de usos.')
+  if (eligibleSubtotal < coupon.minSubtotal) throw new Error(`El código requiere una compra mínima de $${coupon.minSubtotal.toLocaleString('es-AR')}.`)
+  const raw = coupon.type === 'percent' ? Math.floor(eligibleSubtotal * coupon.value / 100) : coupon.value
+  const discount = Math.min(raw, eligibleSubtotal)
+  if (discount <= 0) throw new Error('El código no aplica a los productos de la bolsa.')
+  return { coupon, discount }
+}
+
 const buildOrderFromItems = (items, userId) => {
   const allowedSizes = new Set(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL'])
   if (!Array.isArray(items) || !items.length || items.length > 20) throw new Error('El pedido no tiene productos válidos.')
   const orderItems = []
   let total = 0
+  let eligibleSubtotal = 0
   for (const item of items) {
     const productId = Number(item.productId)
     const quantity = Number(item.quantity)
@@ -886,20 +919,26 @@ const buildOrderFromItems = (items, userId) => {
     const stockForSize = Number(product.stockBySize?.[item.size] ?? 0)
     if (stockForSize < quantity) throw new Error(`No hay stock suficiente para ${product.name} en talla ${item.size}.`)
     total += product.price * quantity
+    eligibleSubtotal += product.price * quantity
     orderItems.push({ product, quantity, size: item.size })
   }
   const reference = `UF-${new Date().getFullYear()}-${randomBytes(3).toString('hex').toUpperCase()}`
-  return { orderItems, total, reference, userId }
+  return { orderItems, total, eligibleSubtotal, reference, userId }
 }
 
 const createOrderRecord = (request, items, shipping, { notify = true, paymentMethod = 'mercadopago' } = {}) => {
-  const { orderItems, total: subtotal, reference, userId } = buildOrderFromItems(items, request.user.id)
+  const { orderItems, total: subtotal, eligibleSubtotal, reference, userId } = buildOrderFromItems(items, request.user.id)
   const shippingDetails = parseShippingDetails(shipping, subtotal)
-  const total = subtotal + shippingDetails.costArs
+  const { coupon, discount } = request.body?.couponCode ? evaluateCoupon(request.body.couponCode, eligibleSubtotal) : { coupon: null, discount: 0 }
+  const total = subtotal - discount + shippingDetails.costArs
   try {
     database.exec('BEGIN IMMEDIATE')
-    const result = database.prepare('INSERT INTO orders (reference, user_id, total_ars, status, shipping_cost_ars, shipping_method, shipping_name, shipping_phone, shipping_street, shipping_city, shipping_province, shipping_postal_code, shipping_notes, payment_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(reference, userId, total, 'pending_payment', shippingDetails.costArs, shippingDetails.method, shippingDetails.name, shippingDetails.phone, shippingDetails.street, shippingDetails.city, shippingDetails.province, shippingDetails.postalCode, shippingDetails.notes, paymentMethod)
+    const result = database.prepare('INSERT INTO orders (reference, user_id, total_ars, status, shipping_cost_ars, shipping_method, shipping_name, shipping_phone, shipping_street, shipping_city, shipping_province, shipping_postal_code, shipping_notes, payment_method, coupon_code, discount_ars) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(reference, userId, total, 'pending_payment', shippingDetails.costArs, shippingDetails.method, shippingDetails.name, shippingDetails.phone, shippingDetails.street, shippingDetails.city, shippingDetails.province, shippingDetails.postalCode, shippingDetails.notes, paymentMethod, coupon?.code ?? '', discount)
     const orderId = Number(result.lastInsertRowid)
+    if (coupon) {
+      const used = database.prepare('UPDATE coupons SET uses = uses + 1 WHERE id = ? AND (max_uses = 0 OR uses < max_uses)').run(coupon.id)
+      if (!used.changes) throw new Error('coupon-exhausted')
+    }
     const insertItem = database.prepare('INSERT INTO order_items (order_id, product_id, product_name, product_slug, image_url, size, quantity, unit_price_ars) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
     for (const item of orderItems) {
       insertItem.run(orderId, item.product.id, item.product.name, item.product.slug, item.product.gallery?.[0]?.src ?? '', item.size, item.quantity, item.product.price)
@@ -911,15 +950,17 @@ const createOrderRecord = (request, items, shipping, { notify = true, paymentMet
     }
     if (notify) createNotification(userId, 'order_created', 'Pedido registrado', `Tu pedido ${reference} quedó registrado y está pendiente de pago.`)
     database.exec('COMMIT')
-    return { order: { id: orderId, reference, totalArs: total, shippingCostArs: shippingDetails.costArs, status: 'pending_payment' } }
-  } catch {
+    return { order: { id: orderId, reference, totalArs: total, discountArs: discount, shippingCostArs: shippingDetails.costArs, status: 'pending_payment' } }
+  } catch (error) {
     database.exec('ROLLBACK')
-    throw new Error('No se pudo registrar el pedido.')
+    throw new Error(error.message === 'coupon-exhausted' ? 'El cupón alcanzó su límite de usos.' : 'No se pudo registrar el pedido.')
   }
 }
 
 // direction: 1 devuelve stock al inventario, -1 lo vuelve a descontar
 const adjustOrderStock = (orderId, direction) => {
+  const used = database.prepare('SELECT coupon_code FROM orders WHERE id = ?').get(orderId)
+  if (used?.coupon_code) database.prepare('UPDATE coupons SET uses = MAX(0, uses - ?) WHERE code = ?').run(direction, used.coupon_code)
   const items = database.prepare('SELECT product_id, size, quantity FROM order_items WHERE order_id = ?').all(orderId)
   for (const item of items) {
     if (!item.product_id) continue
@@ -978,6 +1019,60 @@ const cancelExpiredPendingOrders = () => {
 }
 cancelExpiredPendingOrders()
 setInterval(cancelExpiredPendingOrders, 60 * 60 * 1000).unref()
+
+app.post('/api/coupons/validate', (request, response) => {
+  try {
+    const { eligibleSubtotal } = buildOrderFromItems(request.body.items, null)
+    const { coupon, discount } = evaluateCoupon(request.body.code, eligibleSubtotal)
+    response.json({ code: coupon.code, discountArs: discount })
+  } catch (error) {
+    response.status(400).json({ error: error.message })
+  }
+})
+
+app.get('/api/admin/coupons', requireAdmin, (_request, response) => {
+  response.json({ coupons: database.prepare(`${couponSelect} ORDER BY id DESC`).all() })
+})
+
+const parseCouponBody = (body) => {
+  const code = cleanText(body.code, 30).toUpperCase()
+  if (!/^[A-Z0-9_-]{3,30}$/.test(code)) throw new Error('El código debe tener 3 a 30 letras, números, guiones o guion bajo.')
+  const type = body.type === 'fixed' ? 'fixed' : 'percent'
+  const value = Number(body.value)
+  if (!Number.isInteger(value) || value < 1 || (type === 'percent' && value > 100)) throw new Error(type === 'percent' ? 'El porcentaje debe estar entre 1 y 100.' : 'El monto debe ser un entero positivo.')
+  const minSubtotal = Number(body.minSubtotal ?? 0)
+  const maxUses = Number(body.maxUses ?? 0)
+  if (!Number.isInteger(minSubtotal) || minSubtotal < 0 || !Number.isInteger(maxUses) || maxUses < 0) throw new Error('Compra mínima y usos máximos deben ser enteros de 0 o más.')
+  const expiresAt = typeof body.expiresAt === 'string' && body.expiresAt ? body.expiresAt : null
+  if (expiresAt && !/^\d{4}-\d{2}-\d{2}$/.test(expiresAt)) throw new Error('La fecha de vencimiento no es válida.')
+  return { code, type, value, minSubtotal, maxUses, expiresAt, active: body.active === false ? 0 : 1 }
+}
+
+app.post('/api/admin/coupons', requireAdmin, (request, response) => {
+  try {
+    const c = parseCouponBody(request.body)
+    database.prepare('INSERT INTO coupons (code, type, value, min_subtotal_ars, max_uses, expires_at, active) VALUES (?, ?, ?, ?, ?, ?, ?)').run(c.code, c.type, c.value, c.minSubtotal, c.maxUses, c.expiresAt, c.active)
+    response.status(201).json({ coupons: database.prepare(`${couponSelect} ORDER BY id DESC`).all() })
+  } catch (error) {
+    response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un cupón con ese código.' : error.message })
+  }
+})
+
+app.put('/api/admin/coupons/:id', requireAdmin, (request, response) => {
+  try {
+    const c = parseCouponBody(request.body)
+    const result = database.prepare('UPDATE coupons SET code = ?, type = ?, value = ?, min_subtotal_ars = ?, max_uses = ?, expires_at = ?, active = ? WHERE id = ?').run(c.code, c.type, c.value, c.minSubtotal, c.maxUses, c.expiresAt, c.active, Number(request.params.id))
+    if (!result.changes) return response.status(404).json({ error: 'Cupón no encontrado.' })
+    response.json({ coupons: database.prepare(`${couponSelect} ORDER BY id DESC`).all() })
+  } catch (error) {
+    response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un cupón con ese código.' : error.message })
+  }
+})
+
+app.delete('/api/admin/coupons/:id', requireAdmin, (request, response) => {
+  database.prepare('DELETE FROM coupons WHERE id = ?').run(Number(request.params.id))
+  response.json({ coupons: database.prepare(`${couponSelect} ORDER BY id DESC`).all() })
+})
 
 app.post('/api/orders', resolveCheckoutUser, (request, response) => {
   try {
@@ -1218,6 +1313,13 @@ app.post('/api/payments/create-preference', resolveCheckoutUser, async (request,
   try {
     if (request.body.acceptTerms !== true) throw new Error('Debes aceptar los términos y condiciones para continuar.')
     order = createOrderRecord(request, request.body.items, request.body.shipping, { notify: false })
+    if (order.order.totalArs <= 0) {
+      // Total cubierto por descuentos: no hay nada que cobrar en Mercado Pago.
+      database.prepare("UPDATE orders SET status = 'paid' WHERE id = ?").run(order.order.id)
+      createNotification(request.user.id, 'order_paid', 'Compra confirmada', `Tu pedido ${order.order.reference} fue confirmado.`)
+      void sendOrderEmail(order.order.id, 'paid')
+      return response.json({ order: { ...order.order, status: 'paid' }, paymentUrl: null, initPoint: null })
+    }
     const baseUrl = process.env.MP_RETURN_URL?.trim() || publicBaseUrl
     const webhookUrl = process.env.MP_WEBHOOK_URL || (isProduction ? new URL('/api/payments/webhook', publicBaseUrl).toString() : null)
     const preference = new Preference(mercadoPagoClient)
@@ -1233,7 +1335,10 @@ app.post('/api/payments/create-preference', resolveCheckoutUser, async (request,
         currency_id: 'ARS',
       }
     })
-    if (order.order.shippingCostArs > 0) {
+    if (order.order.discountArs > 0) {
+      // Mercado Pago no admite precios negativos: se envía un único ítem con el total ya descontado.
+      items.splice(0, items.length, { id: order.order.reference, title: `Pedido ${order.order.reference} (con descuento)`, quantity: 1, unit_price: order.order.totalArs, currency_id: 'ARS' })
+    } else if (order.order.shippingCostArs > 0) {
       items.push({ id: 'shipping', title: 'Envío a domicilio', quantity: 1, unit_price: order.order.shippingCostArs, currency_id: 'ARS' })
     }
     const preferenceBody = {

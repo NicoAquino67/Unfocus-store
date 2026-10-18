@@ -782,13 +782,13 @@ function App() {
     setCheckoutStep('delivery')
   }
 
-  const handleCheckout = async ({ shipping, acceptTerms, paymentMethod, guest }: CheckoutPayload) => {
+  const handleCheckout = async ({ shipping, acceptTerms, paymentMethod, guest, couponCode }: CheckoutPayload) => {
     setIsCheckingOut(true)
     try {
       if (paymentMethod === 'transfer') {
         const transferResult = await apiRequest<{ order: { reference: string } }>('/api/orders', {
           method: 'POST',
-          body: JSON.stringify({ items: cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity })), shipping, acceptTerms, paymentMethod, guest }),
+          body: JSON.stringify({ items: cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity })), shipping, acceptTerms, paymentMethod, guest, couponCode }),
         })
         setCart({})
         setIsCartOpen(false)
@@ -797,13 +797,18 @@ function App() {
         showNotice(currentUser ? `Pedido ${transferResult.order.reference} registrado. Transfiere el importe con los datos de tu cuenta.` : `Pedido ${transferResult.order.reference} registrado. Te enviamos por correo los datos para transferir.`)
         return
       }
-      const result = await apiRequest<{ order: { reference: string }; paymentUrl: string }>('/api/payments/create-preference', {
+      const result = await apiRequest<{ order: { reference: string }; paymentUrl: string | null }>('/api/payments/create-preference', {
         method: 'POST',
-        body: JSON.stringify({ items: cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity })), shipping, acceptTerms, guest }),
+        body: JSON.stringify({ items: cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity })), shipping, acceptTerms, guest, couponCode }),
       })
       setCart({})
       setIsCartOpen(false)
       setCheckoutStep('bag')
+      if (!result.paymentUrl) {
+        if (currentUser) navigateToAccount()
+        showNotice(`Pedido ${result.order.reference} confirmado. No hay nada que cobrar.`)
+        return
+      }
       window.location.assign(result.paymentUrl)
       showNotice(`Pedido ${result.order.reference} listo para pagar con Mercado Pago.`)
     } catch (requestError) {
@@ -1004,7 +1009,7 @@ function App() {
           <aside className="cart-drawer" role="dialog" aria-modal="true" aria-labelledby="cart-title">
             <div className="cart-header"><div><p className="eyebrow">Tu selección</p><h2 id="cart-title">La bolsa <span>({cartCount})</span></h2></div><button className="icon-button" type="button" onClick={() => { setIsCartOpen(false); setCheckoutStep('bag') }} aria-label="Cerrar bolsa"><X size={21} /></button></div>
             {cartItems.length > 0 && checkoutStep === 'delivery' ? (
-              <CheckoutForm user={currentUser} subtotal={cartTotal} shipping={storeConfig?.shipping ?? null} transfer={storeConfig?.transfer ?? null} currency={displayCurrency} usdArsRate={usdArsRate} isSubmitting={isCheckingOut} onBack={() => setCheckoutStep('bag')} onOpenTerms={() => navigateToLegal('terminos')} onRequestLogin={() => { setIsCartOpen(false); setCheckoutStep('bag'); navigateToAccount() }} onSubmit={(payload) => { void handleCheckout(payload) }} />
+              <CheckoutForm user={currentUser} subtotal={cartTotal} items={cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity }))} shipping={storeConfig?.shipping ?? null} transfer={storeConfig?.transfer ?? null} currency={displayCurrency} usdArsRate={usdArsRate} isSubmitting={isCheckingOut} onBack={() => setCheckoutStep('bag')} onOpenTerms={() => navigateToLegal('terminos')} onRequestLogin={() => { setIsCartOpen(false); setCheckoutStep('bag'); navigateToAccount() }} onSubmit={(payload) => { void handleCheckout(payload) }} />
             ) : cartItems.length === 0 ? (
               <div className="cart-empty"><div className="cart-empty__icon"><ShoppingBag size={26} strokeWidth={1.5} /></div><h3>Tu bolsa está vacía.</h3><p>Elige solo lo que se sienta bien para ti.</p><button className="button button--dark" type="button" onClick={() => setIsCartOpen(false)}>Seguir mirando <ArrowRight size={16} /></button></div>
             ) : (
