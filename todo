@@ -8,6 +8,7 @@ A. MVP PARA SALIR A PRODUCCIÓN Y VENDER
 
 Catálogo y tienda
 [x] Catálogo con fichas de producto, galería frente/espalda y descripción
+[ ] la herramienta de busqueda deberia de desplegar una lista con los productos que el usuario busca por su nombre, o similar
 [x] Filtros por corte, público, género y promociones
 [x] Stock por talle, con reserva al crear el pedido y liberación al cancelar
 [x] Guía de talles con equivalencia argentina y tabla de medidas
