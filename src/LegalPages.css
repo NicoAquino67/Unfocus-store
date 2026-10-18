@@ -1,0 +1,22 @@
+.legal-page { width: min(1080px, calc(100% - 11%)); min-height: 66vh; margin: 0 auto; padding: 36px 0 84px; }
+.legal-page__layout { display: grid; grid-template-columns: minmax(180px, .6fr) minmax(0, 1.8fr); gap: clamp(30px, 6vw, 90px); margin-top: 34px; align-items: start; }
+.legal-page__nav { display: grid; gap: 4px; position: sticky; top: 100px; }
+.legal-page__nav button { padding: 9px 12px; border: 0; border-left: 2px solid var(--line); background: transparent; color: var(--ink-soft); font: 600 11px var(--sans); text-align: left; cursor: pointer; }
+.legal-page__nav button:hover { color: var(--brand-blue-deep); }
+.legal-page__nav button.is-active { border-left-color: var(--brand-blue); color: var(--brand-blue-deep); }
+.legal-page__body .eyebrow { color: var(--brand-blue-deep); }
+.legal-page__body h1 { margin: 0 0 22px; color: var(--brand-blue-deep); font: 600 clamp(32px, 4.4vw, 48px)/1.08 var(--display); }
+.legal-page__body h2 { margin: 26px 0 8px; color: var(--ink); font: 700 13px var(--sans); }
+.legal-page__body p { margin: 0 0 12px; color: var(--ink-soft); font-size: 12px; line-height: 1.75; }
+.legal-page__body a, .legal-page__body p button { padding: 0; border: 0; background: transparent; color: var(--brand-blue-deep); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.legal-page__form { margin-top: 22px; max-width: 460px; }
+.legal-page__small { margin: 0; color: var(--ink-soft); font-size: 10px; }
+.footer-legal { display: flex; flex-wrap: wrap; gap: 6px 16px; width: min(1320px, calc(100% - 11%)); margin: 0 auto; padding-bottom: 6px; }
+.footer-legal a { color: #777a73; font-size: 10px; }
+.footer-store { width: min(1320px, calc(100% - 11%)); margin: 0 auto; padding-bottom: 22px; color: #898c84; font-size: 10px; }
+@media (max-width: 760px) {
+  .legal-page__layout { grid-template-columns: 1fr; }
+  .legal-page__nav { position: static; grid-auto-flow: column; overflow-x: auto; }
+  .legal-page__nav button { white-space: nowrap; border-left: 0; border-bottom: 2px solid var(--line); }
+  .legal-page__nav button.is-active { border-bottom-color: var(--brand-blue); }
+}

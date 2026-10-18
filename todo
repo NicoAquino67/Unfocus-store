@@ -1,0 +1,113 @@
+UnFocus · Checklist (comparativa con nike.com)
+
+Leyenda: [x] hecho · [ ] pendiente
+
+========================================
+A. MVP PARA SALIR A PRODUCCIÓN Y VENDER
+========================================
+
+Catálogo y tienda
+[x] Catálogo con fichas de producto, galería frente/espalda y descripción
+[x] Filtros por corte, público, género y promociones
+[x] Stock por talle, con reserva al crear el pedido y liberación al cancelar
+[x] Guía de talles con equivalencia argentina y tabla de medidas
+[ ] Verificar las medidas reales de las prendas (hoy son valores orientativos en `garmentMeasurements`, src/App.tsx)
+[x] Precios en ARS con conversión informativa a USD
+
+Cuenta de cliente
+[x] Registro, login y logout (cookies HttpOnly, scrypt)
+[x] Recuperación de contraseña por email
+[x] Favoritos, pedidos y notificaciones por cuenta
+[x] Reseñas de producto
+
+Checkout y pagos
+[x] Bolsa de compra
+[x] Datos de envío (domicilio o retiro) y cálculo de costo de envío
+[x] Costo de envío y envío gratis desde un monto, editables desde el panel admin
+[x] Aceptación obligatoria de términos y condiciones
+[x] Pago con Mercado Pago (preferencia + webhook)
+[x] Reintento de pago de pedidos pendientes
+[x] Cancelación automática tras más de 3 pagos rechazados, con stock liberado
+[x] Webhook probado en local con túnel (cloudflared)
+[ ] Probar un pago real/sandbox aprobado con un comprador distinto del vendedor (la pasarela sandbox dio "algo salió mal")
+[ ] Verificar la firma `x-signature` de las notificaciones de Mercado Pago
+[ ] Cuotas / otros medios de pago (revisar configuración de la preferencia)
+
+Pedidos y logística
+[x] Estados: pendiente, pagado, enviado, entregado, cancelado
+[x] Transporte, código y link de seguimiento visibles para el cliente
+[x] Panel admin: pedidos con dirección de entrega y formulario de despacho
+[ ] Restaurar stock cuando el admin cancela un pedido manualmente (hoy solo lo hace la cancelación automática)
+[ ] Etiquetas de envío / integración con un correo (Andreani, Correo Argentino…)
+
+Emails transaccionales
+[x] Pago recibido, pedido despachado, pedido cancelado, recuperación de contraseña, contacto
+[ ] Configurar SMTP real (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, CONTACT_FROM_EMAIL) y probar el envío
+[ ] Email de pedido creado / bienvenida (opcional)
+
+Legales (Argentina)
+[x] Términos y condiciones, privacidad, cambios y devoluciones, botón de arrepentimiento
+[x] Datos de la tienda (razón social, CUIT, domicilio) en el pie, editables desde el admin
+[ ] Cargar los datos reales de la tienda en el panel admin
+[ ] Revisión de los textos legales por un abogado
+[ ] Defensa del consumidor / botón de baja según corresponda
+
+Despliegue
+[x] Dockerfile y docker-compose
+[ ] Elegir hosting con almacenamiento persistente (SQLite + uploads) y HTTPS
+[ ] Variables de producción: NODE_ENV=production, PUBLIC_BASE_URL, ADMIN_EMAIL/ADMIN_PASSWORD, credenciales de Mercado Pago de producción
+[ ] Quitar MP_WEBHOOK_URL en producción (se usa PUBLIC_BASE_URL/api/payments/webhook)
+[ ] Dominio y certificado (unfocus.shop)
+[ ] Backups automáticos de la base de datos en producción
+[ ] Subir el repositorio a GitHub
+
+========================================
+B. PARA ACERCARSE A NIKE.COM U OTRA TIENDA GRANDE
+========================================
+
+Descubrimiento
+[ ] Buscador global con sugerencias
+[ ] Categorías y navegación por menús (hombre / mujer / niños / novedades / ofertas)
+[ ] Ordenar por precio, novedad y popularidad
+[ ] Paginación o carga infinita
+[ ] Colores y variantes de producto
+[ ] Productos relacionados y "completa el look"
+[ ] Vistos recientemente
+[ ] Páginas de colección / lookbook
+
+Ficha de producto
+[ ] Zoom y más imágenes por producto, video
+[ ] Aviso "volver a tener stock" por email
+[ ] Calculadora de envío por código postal en la ficha
+[ ] Estimación de fecha de entrega
+[ ] Preguntas y respuestas
+
+Checkout
+[ ] Compra como invitado
+[ ] Cupones y códigos de descuento
+[ ] Tarjeta de regalo
+[ ] Múltiples direcciones guardadas en la cuenta
+[ ] Recuperación de carrito abandonado por email
+[ ] Seguimiento de envío integrado con el transporte
+
+Cuenta y fidelización
+[ ] Programa de membresía / puntos
+[ ] Devolución y cambio iniciados desde la cuenta
+[ ] Lista de deseos compartible
+[ ] Comprobante / factura electrónica (AFIP)
+
+Marketing y SEO
+[ ] SEO: meta tags por producto, sitemap, datos estructurados, URLs limpias
+[ ] Analítica (GA4 / Meta Pixel) con aviso de cookies
+[ ] Newsletter con campañas (hoy solo se guardan suscriptores)
+[ ] Integración con redes sociales / Instagram shop
+
+Operación y calidad
+[ ] Roles de administración con permisos y registro de auditoría
+[ ] Reportes de ventas y stock bajo
+[ ] Importación/exportación de catálogo (CSV)
+[ ] Multi-idioma y multi-moneda de cobro
+[ ] Tests automatizados (hoy solo lint y build)
+[ ] Accesibilidad (auditoría WCAG) y rendimiento (Lighthouse)
+[ ] Migrar de SQLite a PostgreSQL si crece el volumen
+[ ] Páginas de ayuda / FAQ y chat de soporte

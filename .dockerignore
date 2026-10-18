@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+!.env.example
+node_modules
+dist
+data
+uploads
+ident/*.pdf
+ident/productos/1.jpg
+ident/productos/no_molestar_2.jpg
+*.zip
+*.log

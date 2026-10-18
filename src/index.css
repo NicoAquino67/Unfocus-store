@@ -1,0 +1,37 @@
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap');
+
+:root {
+  --paper: #eef1ef;
+  --ink: #1c2321;
+  --ink-soft: #4e5b59;
+  --line: #d8dfdc;
+  --lime: #d8edf5;
+  --coral: #c2212e;
+  --green-dark: #1735a0;
+  --muted: #65716f;
+  --brand-blue: #0092d2;
+  --brand-blue-deep: #1735a0;
+  --brand-red: #c2212e;
+  --soft-lavender: #e4e0ef;
+  --soft-mint: #d5e9e3;
+  --graphic-lavender: #a89acb;
+  --graphic-yellow: #f4ca50;
+  --sans: 'Fredoka', sans-serif;
+  --display: 'Arista Pro Alternate', 'Fredoka', sans-serif;
+  font-family: var(--sans);
+  color: var(--ink);
+  background: var(--paper);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { min-width: 320px; scroll-behavior: smooth; }
+body { min-width: 320px; margin: 0; font-size: 14px; }
+button, input, select { font: inherit; }
+button, a, select { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--coral); outline-offset: 3px; }
+img { display: block; max-width: 100%; }
+#root { min-height: 100vh; }

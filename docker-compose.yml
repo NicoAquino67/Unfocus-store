@@ -1,0 +1,31 @@
+services:
+  unfocus:
+    build: .
+    image: unfocus-mall:latest
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      ADMIN_NAME: ${ADMIN_NAME:-UnFocus Admin}
+      USD_ARS_RATE: ${USD_ARS_RATE:-}
+      MP_ACCESS_TOKEN: ${MP_ACCESS_TOKEN:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3001}
+      COOKIE_SECURE: ${COOKIE_SECURE:-}
+      DATABASE_PATH: /app/data/unfocus.sqlite
+    ports:
+      - "${APP_PORT:-3001}:3001"
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
