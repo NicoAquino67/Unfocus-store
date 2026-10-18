@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, scrypt, createHash, timingSafeEqual } from 'node:crypto'
+import { randomBytes, randomUUID, scrypt, createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -833,7 +833,22 @@ const createOrderRecord = (request, items, shipping, { notify = true } = {}) => 
   }
 }
 
-const cancelPendingOrderAndRestoreStock = (orderId, { removeOrder = false } = {}) => {
+// direction: 1 devuelve stock al inventario, -1 lo vuelve a descontar
+const adjustOrderStock = (orderId, direction) => {
+  const items = database.prepare('SELECT product_id, size, quantity FROM order_items WHERE order_id = ?').all(orderId)
+  for (const item of items) {
+    if (!item.product_id) continue
+    const product = selectProductById.get(item.product_id)
+    if (!product) continue
+    const stockBySize = JSON.parse(product.stock_by_size || '{}')
+    const delta = direction * Number(item.quantity)
+    stockBySize[item.size] = Math.max(0, Number(stockBySize[item.size] ?? 0) + delta)
+    const stock = Math.max(0, Number(product.stock ?? 0) + delta)
+    database.prepare('UPDATE products SET stock = ?, stock_by_size = ? WHERE id = ?').run(stock, JSON.stringify(stockBySize), item.product_id)
+  }
+}
+
+const cancelPendingOrderAndRestoreStock = (orderId, { removeOrder = false, reason = 'payment' } = {}) => {
   database.exec('BEGIN IMMEDIATE')
   try {
     const order = database.prepare('SELECT id, user_id, reference, status FROM orders WHERE id = ?').get(orderId)
@@ -846,30 +861,38 @@ const cancelPendingOrderAndRestoreStock = (orderId, { removeOrder = false } = {}
       database.exec('COMMIT')
       return false
     }
-    const items = database.prepare('SELECT product_id, size, quantity FROM order_items WHERE order_id = ?').all(order.id)
-    for (const item of items) {
-      if (!item.product_id) continue
-      const product = selectProductById.get(item.product_id)
-      if (!product) continue
-      const stockBySize = JSON.parse(product.stock_by_size || '{}')
-      stockBySize[item.size] = Number(stockBySize[item.size] ?? 0) + Number(item.quantity)
-      const stock = Number(product.stock ?? 0) + Number(item.quantity)
-      database.prepare('UPDATE products SET stock = ?, stock_by_size = ? WHERE id = ?').run(stock, JSON.stringify(stockBySize), item.product_id)
-    }
+    adjustOrderStock(order.id, 1)
     if (removeOrder) {
       database.prepare('DELETE FROM notifications WHERE user_id = ? AND kind = ? AND message = ?')
         .run(order.user_id, 'order_created', `Tu pedido ${order.reference} quedó registrado y está pendiente de pago.`)
       database.prepare('DELETE FROM orders WHERE id = ?').run(order.id)
     } else {
-      createNotification(order.user_id, 'order_cancelled', 'Pago no completado', `El pago del pedido ${order.reference} no se completó. El stock fue liberado.`)
+      createNotification(order.user_id, 'order_cancelled', 'Pago no completado', reason === 'expired'
+        ? `El pedido ${order.reference} se canceló por falta de pago en ${pendingOrderExpiryDays} días. El stock fue liberado.`
+        : `El pago del pedido ${order.reference} no se completó. El stock fue liberado.`)
     }
     database.exec('COMMIT')
+    if (!removeOrder) void sendOrderEmail(order.id, 'cancelled')
     return true
   } catch (error) {
     database.exec('ROLLBACK')
     throw error
   }
 }
+
+const pendingOrderExpiryDays = Math.max(1, Number(process.env.PENDING_ORDER_EXPIRY_DAYS) || 3)
+const cancelExpiredPendingOrders = () => {
+  try {
+    const expired = database.prepare("SELECT id FROM orders WHERE status = 'pending_payment' AND created_at <= datetime('now', ?)").all(`-${pendingOrderExpiryDays} days`)
+    for (const { id } of expired) cancelPendingOrderAndRestoreStock(id, { reason: 'expired' })
+    return expired.length
+  } catch (error) {
+    console.error('Could not cancel expired orders:', error.message)
+    return 0
+  }
+}
+cancelExpiredPendingOrders()
+setInterval(cancelExpiredPendingOrders, 60 * 60 * 1000).unref()
 
 app.post('/api/orders', requireAuth, (request, response) => {
   try {
@@ -1036,6 +1059,8 @@ app.patch('/api/admin/orders/:id/status', requireAdmin, (request, response) => {
   const trackingUrl = cleanText(request.body.trackingUrl, 300)
   if (trackingUrl && !/^https?:\/\//i.test(trackingUrl)) return response.status(400).json({ error: 'El enlace de seguimiento debe comenzar con http:// o https://.' })
   const changed = order.status !== status
+  if (changed && status === 'cancelled') adjustOrderStock(id, 1)
+  if (changed && order.status === 'cancelled') adjustOrderStock(id, -1)
   if (status === 'shipped') {
     database.prepare("UPDATE orders SET status = ?, carrier = ?, tracking_code = ?, tracking_url = ?, shipped_at = COALESCE(shipped_at, CURRENT_TIMESTAMP) WHERE id = ?").run(status, carrier, trackingCode, trackingUrl, id)
   } else {
@@ -1149,10 +1174,28 @@ app.post('/api/payments/create-preference', requireAuth, async (request, respons
   }
 })
 
+const mercadoPagoWebhookSecret = process.env.MP_WEBHOOK_SECRET?.trim()
+if (isProduction && mercadoPagoAccessToken && !mercadoPagoWebhookSecret) console.warn('MP_WEBHOOK_SECRET no está definido: las notificaciones de Mercado Pago no se verifican por firma.')
+
+// Valida la cabecera x-signature (HMAC-SHA256) descrita en la documentación de webhooks de Mercado Pago.
+const hasValidWebhookSignature = (request, dataId) => {
+  if (!mercadoPagoWebhookSecret) return true
+  const signature = String(request.get('x-signature') ?? '')
+  const requestId = String(request.get('x-request-id') ?? '')
+  const parts = Object.fromEntries(signature.split(',').map((part) => part.trim().split(/=(.*)/s).slice(0, 2)))
+  if (!parts.ts || !parts.v1) return false
+  const id = /^[a-z0-9]+$/i.test(dataId) ? dataId.toLowerCase() : dataId
+  const manifest = `${id ? `id:${id};` : ''}${requestId ? `request-id:${requestId};` : ''}ts:${parts.ts};`
+  const expected = createHmac('sha256', mercadoPagoWebhookSecret).update(manifest).digest('hex')
+  const received = String(parts.v1)
+  return expected.length === received.length && timingSafeEqual(Buffer.from(expected), Buffer.from(received))
+}
+
 app.post('/api/payments/webhook', async (request, response) => {
   const type = request.body?.type
   const resource = request.body?.data?.id
   if (!type || !resource) return response.status(400).json({ ok: false })
+  if (!hasValidWebhookSignature(request, String(request.query['data.id'] ?? resource))) return response.status(401).json({ ok: false })
   if (type !== 'payment') return response.json({ ok: true })
   if (!mercadoPagoAccessToken) return response.json({ ok: true })
   try {
@@ -1187,18 +1230,7 @@ app.post('/api/payments/webhook', async (request, response) => {
       try {
         const currentOrder = database.prepare('SELECT id, user_id, reference, status FROM orders WHERE id = ?').get(order.id)
         if (currentOrder && ['pending_payment', 'cancelled'].includes(currentOrder.status)) {
-          if (currentOrder.status === 'cancelled') {
-            const items = database.prepare('SELECT product_id, size, quantity FROM order_items WHERE order_id = ?').all(order.id)
-            for (const item of items) {
-              if (!item.product_id) continue
-              const product = selectProductById.get(item.product_id)
-              if (!product) continue
-              const stockBySize = JSON.parse(product.stock_by_size || '{}')
-              stockBySize[item.size] = Math.max(0, Number(stockBySize[item.size] ?? 0) - Number(item.quantity))
-              const stock = Math.max(0, Number(product.stock ?? 0) - Number(item.quantity))
-              database.prepare('UPDATE products SET stock = ?, stock_by_size = ? WHERE id = ?').run(stock, JSON.stringify(stockBySize), item.product_id)
-            }
-          }
+          if (currentOrder.status === 'cancelled') adjustOrderStock(order.id, -1)
           database.prepare("UPDATE orders SET status = 'paid' WHERE id = ?").run(order.id)
           createNotification(order.user_id, 'order_paid', 'Compra confirmada', `Tu pedido ${reference} fue confirmado.`)
           becamePaid = true
