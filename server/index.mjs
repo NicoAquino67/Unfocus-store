@@ -395,11 +395,15 @@ const productFromRow = (row) => ({
     { src: row.back_image, alt: row.back_alt, label: 'Espalda' },
   ],
   badge: row.badge,
+  createdAt: row.created_at,
+  sold: Number(row.sold ?? 0),
 })
 
-const selectProductById = database.prepare('SELECT * FROM products WHERE id = ?')
-const selectProductBySlug = database.prepare('SELECT * FROM products WHERE slug = ?')
-const allProducts = database.prepare('SELECT * FROM products ORDER BY id')
+// sold = unidades en pedidos pagados; alimenta el orden por popularidad
+const productSelect = "SELECT p.*, (SELECT COALESCE(SUM(oi.quantity), 0) FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE oi.product_id = p.id AND o.status IN ('paid', 'shipped', 'delivered')) AS sold FROM products p"
+const selectProductById = database.prepare(`${productSelect} WHERE p.id = ?`)
+const selectProductBySlug = database.prepare(`${productSelect} WHERE p.slug = ?`)
+const allProducts = database.prepare(`${productSelect} ORDER BY p.id`)
 
 const insertSeedProducts = async () => {
   if (database.prepare('SELECT COUNT(*) AS count FROM products').get().count > 0) return

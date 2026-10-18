@@ -528,6 +528,8 @@ function App() {
     .sort((first, second) => {
       if (sortOrder === 'price-asc') return first.price - second.price
       if (sortOrder === 'price-desc') return second.price - first.price
+      if (sortOrder === 'newest') return (second.createdAt ?? '').localeCompare(first.createdAt ?? '') || second.id - first.id
+      if (sortOrder === 'popular') return (second.sold ?? 0) - (first.sold ?? 0) || first.id - second.id
       return first.id - second.id
     })
   const activeFilterCount = Number(cutFilter !== 'Todas') + Number(audienceFilter !== 'Todos') + Number(genderFilter !== 'Todos')
@@ -885,7 +887,7 @@ function App() {
               {categories.map((category) => <button className={`category-tab${activeCategory === category ? ' is-active' : ''}`} key={category} type="button" onClick={() => setActiveCategory(category)} aria-pressed={activeCategory === category}>{category}</button>)}
             </div>
             <div className="collection-toolbar__controls">
-              <label className="sort-control"><span>Ordenar</span><select value={sortOrder} onChange={(event) => setSortOrder(event.target.value)} aria-label="Ordenar productos"><option value="featured">Destacados</option><option value="price-asc">Precio: menor a mayor</option><option value="price-desc">Precio: mayor a menor</option></select></label>
+              <label className="sort-control"><span>Ordenar</span><select value={sortOrder} onChange={(event) => setSortOrder(event.target.value)} aria-label="Ordenar productos"><option value="featured">Destacados</option><option value="newest">Novedades</option><option value="popular">Más vendidos</option><option value="price-asc">Precio: menor a mayor</option><option value="price-desc">Precio: mayor a menor</option></select></label>
               <details className="filter-menu">
                 <summary className="filter-menu__trigger"><ListFilter size={14} aria-hidden="true" /><span>Filtrar</span>{activeFilterCount > 0 && <span className="filter-menu__count">{activeFilterCount}</span>}<ChevronDown className="filter-menu__chevron" size={14} aria-hidden="true" /></summary>
                 <div className="filter-menu__panel" aria-label="Filtros de productos">

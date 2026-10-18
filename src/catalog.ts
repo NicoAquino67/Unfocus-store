@@ -21,6 +21,8 @@ export type Product = {
   gallery?: { src: string; alt: string; label: string }[]
   badge?: string
   stockBySize?: Record<string, number>
+  createdAt?: string
+  sold?: number
 }
 
 export const garmentCuts = ['Oversize', 'Regular fit', 'Slim', 'Unisex'] as const
