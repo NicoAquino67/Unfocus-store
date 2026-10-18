@@ -968,6 +968,14 @@ app.post('/api/newsletter', (request, response) => {
   }
 })
 
+app.post('/api/newsletter/unsubscribe', (request, response) => {
+  const email = typeof request.body.email === 'string' ? request.body.email.trim().toLowerCase() : ''
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return response.status(400).json({ error: 'Escribe un correo válido.' })
+  database.prepare('DELETE FROM newsletter_subscribers WHERE email = ?').run(email)
+  // Misma respuesta exista o no la suscripción, para no revelar qué correos están suscriptos.
+  response.json({ ok: true, message: 'Listo. Si el correo estaba suscripto, ya no recibirá novedades de UnFocus.' })
+})
+
 app.post('/api/contact', async (request, response) => {
   const name = typeof request.body.name === 'string' ? request.body.name.trim() : ''
   const email = typeof request.body.email === 'string' ? request.body.email.trim().toLowerCase() : ''

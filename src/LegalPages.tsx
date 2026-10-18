@@ -55,6 +55,74 @@ function RegretForm({ store }: { store: StoreConfig['store'] | null }) {
   )
 }
 
+function UnsubscribeForms({ store }: { store: StoreConfig['store'] | null }) {
+  const [feedback, setFeedback] = useState<{ message: string; isError?: boolean } | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const unsubscribe = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setIsSubmitting(true)
+    setFeedback(null)
+    const form = event.currentTarget
+    try {
+      const result = await apiRequest<{ message: string }>('/api/newsletter/unsubscribe', {
+        method: 'POST',
+        body: JSON.stringify({ email: new FormData(form).get('email') }),
+      })
+      form.reset()
+      setFeedback({ message: result.message })
+    } catch (requestError) {
+      setFeedback({ message: requestError instanceof Error ? requestError.message : 'No se pudo procesar la baja.', isError: true })
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const requestAccountDeletion = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setIsSubmitting(true)
+    setFeedback(null)
+    const form = event.currentTarget
+    const data = new FormData(form)
+    try {
+      const result = await apiRequest<{ message: string }>('/api/contact', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: data.get('name'),
+          email: data.get('email'),
+          subject: 'Baja de cuenta',
+          message: `Solicito la baja de mi cuenta y la supresión de mis datos personales.\nCorreo de la cuenta: ${String(data.get('email') ?? '')}`,
+        }),
+      })
+      form.reset()
+      setFeedback({ message: `Registramos tu solicitud de baja de cuenta. ${result.message}` })
+    } catch (requestError) {
+      setFeedback({ message: requestError instanceof Error ? requestError.message : 'No se pudo enviar la solicitud.', isError: true })
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <>
+      <h2>Darme de baja del newsletter</h2>
+      <form className="contact-form legal-page__form" onSubmit={(event) => { void unsubscribe(event) }}>
+        <label><span>Correo suscripto</span><input name="email" type="email" required maxLength={254} autoComplete="email" /></label>
+        <button className="button button--coral" type="submit" disabled={isSubmitting}>Darme de baja</button>
+      </form>
+      <h2>Dar de baja mi cuenta</h2>
+      <p>Si tienes pedidos en curso los completamos primero; por obligaciones fiscales podemos conservar los datos de facturación el tiempo que exige la ley.</p>
+      <form className="contact-form legal-page__form" onSubmit={(event) => { void requestAccountDeletion(event) }}>
+        <label><span>Nombre y apellido</span><input name="name" required minLength={2} maxLength={80} autoComplete="name" /></label>
+        <label><span>Correo de la cuenta</span><input name="email" type="email" required maxLength={254} autoComplete="email" /></label>
+        <button className="button button--coral" type="submit" disabled={isSubmitting}>Solicitar baja de cuenta</button>
+      </form>
+      {feedback && <p className={`contact-form__feedback${feedback.isError ? ' is-error' : ' is-sent'}`} role="status">{feedback.message}</p>}
+      {store?.email && <p className="legal-page__small">También puedes escribirnos a {store.email}.</p>}
+    </>
+  )
+}
+
 function LegalPages({ page, store, onBack, onOpenPage, onOpenContact }: LegalPageProps) {
   const seller = store?.legalName || 'UnFocus'
   const sellerDetails = [store?.taxId && `CUIT ${store.taxId}`, store?.address].filter(Boolean).join(' · ')
@@ -116,6 +184,24 @@ function LegalPages({ page, store, onBack, onOpenPage, onOpenContact }: LegalPag
         <p>Según el artículo 34 de la Ley 24.240 y la Resolución 424/2020, puedes revocar tu compra dentro de los 10 días corridos contados desde que recibes el producto o desde que se celebra el contrato, lo que ocurra último. Esta revocación es gratuita: no debes dar motivos ni afrontar costos.</p>
         <p>Completa el formulario. Quedará registrada tu solicitud con fecha y te responderemos por correo con los pasos para la devolución y el reembolso.</p>
         <RegretForm store={store} />
+      </>
+    ),
+    defensa: (
+      <>
+        <h2>Tus derechos como consumidor</h2>
+        <p>Rige la Ley 24.240 de Defensa del Consumidor. Tienes derecho a información clara y veraz, a un trato digno y equitativo, a la seguridad de los productos y a reclamar ante cualquier incumplimiento.</p>
+        <h2>Dónde reclamar</h2>
+        <p>Si tu reclamo no se resuelve con nosotros, puedes presentarlo en <a href="https://www.argentina.gob.ar/produccion/defensadelconsumidor" target="_blank" rel="noreferrer">Defensa del Consumidor (argentina.gob.ar)</a> o ante la autoridad de aplicación de tu jurisdicción. Las consultas y reclamos a UnFocus se reciben a través de {contact}.</p>
+        <h2>Datos del proveedor</h2>
+        <p>{seller}{sellerDetails ? ` · ${sellerDetails}` : ''}</p>
+        <h2>Arrepentimiento y baja</h2>
+        <p>Puedes revocar tu compra dentro de los 10 días desde la recepción desde el <button type="button" onClick={() => onOpenPage('arrepentimiento')}>botón de arrepentimiento</button>, y gestionar tus suscripciones desde el <button type="button" onClick={() => onOpenPage('baja')}>botón de baja</button>.</p>
+      </>
+    ),
+    baja: (
+      <>
+        <p>Puedes cancelar tus suscripciones o tu cuenta cuando quieras, con el mismo canal en el que te registraste y sin costo.</p>
+        <UnsubscribeForms store={store} />
       </>
     ),
   }
