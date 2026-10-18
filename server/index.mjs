@@ -142,6 +142,7 @@ const runSchemaMigration = () => {
   const columns = new Map()
   for (const row of database.prepare('PRAGMA table_info(products)').all()) columns.set(row.name, true)
   const orderColumns = new Set(database.prepare('PRAGMA table_info(orders)').all().map((row) => row.name))
+const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().map((row) => row.name))
   const orderColumnDefinitions = {
     payment_url: 'TEXT',
     shipping_cost_ars: 'INTEGER NOT NULL DEFAULT 0',
@@ -174,6 +175,7 @@ const runSchemaMigration = () => {
     CREATE INDEX IF NOT EXISTS payment_attempts_order_id_idx ON payment_attempts(order_id);
   `)
   if (!columns.has('stock')) database.exec('ALTER TABLE products ADD COLUMN stock INTEGER NOT NULL DEFAULT 0')
+  if (!userColumns.has('is_guest')) database.exec('ALTER TABLE users ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0')
   if (!columns.has('extra_images')) database.exec("ALTER TABLE products ADD COLUMN extra_images TEXT NOT NULL DEFAULT '[]'")
   if (!columns.has('stock_by_size')) database.exec("ALTER TABLE products ADD COLUMN stock_by_size TEXT NOT NULL DEFAULT '{}' ")
   database.exec(`
@@ -555,6 +557,25 @@ const limitAuthAttempts = (request, response, next) => {
   next()
 }
 
+// Permite comprar sin cuenta: crea (o reutiliza) un usuario "invitado" que no puede iniciar sesi?n.
+const resolveCheckoutUser = (request, response, next) => {
+  if (request.user) return next()
+  const guest = request.body?.guest
+  const name = typeof guest?.name === 'string' ? guest.name.trim() : ''
+  const email = typeof guest?.email === 'string' ? guest.email.trim().toLowerCase() : ''
+  const phone = typeof guest?.phone === 'string' ? guest.phone.trim().slice(0, 40) : ''
+  if (!guest) return response.status(401).json({ error: 'Inicia sesi?n o contin?a como invitado para comprar.' })
+  if (name.length < 2 || name.length > 80) return response.status(400).json({ error: 'Escribe tu nombre para continuar como invitado.' })
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return response.status(400).json({ error: 'Escribe un correo v?lido para recibir la confirmaci?n.' })
+  const existing = database.prepare('SELECT id, is_guest FROM users WHERE email = ?').get(email)
+  if (existing && !existing.is_guest) return response.status(409).json({ error: 'Ese correo ya tiene una cuenta. Inicia sesi?n para continuar.' })
+  let userId = existing?.id
+  if (userId) database.prepare('UPDATE users SET name = ?, phone = ? WHERE id = ?').run(name, phone, userId)
+  else userId = Number(database.prepare("INSERT INTO users (name, email, phone, password_hash, is_guest) VALUES (?, ?, ?, 'guest', 1)").run(name, email, phone).lastInsertRowid)
+  request.user = { id: userId, name, email, phone, role: 'customer', isGuest: true }
+  limitAuthAttempts(request, response, next)
+}
+
 const authResponse = (request, response) => response.json({ user: publicUser(request.user) })
 
 app.get('/api/health', (_request, response) => response.json({ status: 'ok' }))
@@ -642,7 +663,7 @@ app.post('/api/auth/reset-password', async (request, response) => {
   const reset = database.prepare('SELECT * FROM password_reset_tokens WHERE user_id = ? AND expires_at > ? AND used_at IS NULL ORDER BY created_at DESC LIMIT 1').get(user.id, Date.now())
   if (!reset || reset.token_hash !== sha256(token)) return response.status(400).json({ error: 'El token de acceso no es válido o ya expiró.' })
   const passwordHash = await hashPassword(password)
-  database.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, user.id)
+  database.prepare('UPDATE users SET password_hash = ?, is_guest = 0 WHERE id = ?').run(passwordHash, user.id)
   database.prepare('UPDATE password_reset_tokens SET used_at = ? WHERE id = ?').run(Date.now(), reset.id)
   response.json({ ok: true, message: 'La contraseña fue actualizada correctamente.' })
 })
@@ -655,11 +676,15 @@ app.post('/api/auth/register', limitAuthAttempts, async (request, response) => {
   if (name.length < 2 || name.length > 80) return response.status(400).json({ error: 'Escribe un nombre de entre 2 y 80 caracteres.' })
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return response.status(400).json({ error: 'Escribe un correo válido.' })
   if (password.length < 10 || password.length > 200) return response.status(400).json({ error: 'La contraseña debe tener al menos 10 caracteres.' })
-  if (database.prepare('SELECT id FROM users WHERE email = ?').get(email)) return response.status(409).json({ error: 'Ya existe una cuenta con ese correo.' })
+  const existingUser = database.prepare('SELECT id, is_guest FROM users WHERE email = ?').get(email)
+  if (existingUser && !existingUser.is_guest) return response.status(409).json({ error: 'Ya existe una cuenta con ese correo.' })
   try {
     const passwordHash = await hashPassword(password)
-    const result = database.prepare('INSERT INTO users (name, email, phone, password_hash) VALUES (?, ?, ?, ?)').run(name, email, phone, passwordHash)
-    const user = database.prepare('SELECT id, name, email, phone, role FROM users WHERE id = ?').get(Number(result.lastInsertRowid))
+    // Si el correo ya compr? como invitado, la cuenta nueva hereda ese historial de pedidos.
+    const userId = existingUser
+      ? (database.prepare('UPDATE users SET name = ?, phone = ?, password_hash = ?, is_guest = 0 WHERE id = ?').run(name, phone, passwordHash, existingUser.id), existingUser.id)
+      : Number(database.prepare('INSERT INTO users (name, email, phone, password_hash) VALUES (?, ?, ?, ?)').run(name, email, phone, passwordHash).lastInsertRowid)
+    const user = database.prepare('SELECT id, name, email, phone, role FROM users WHERE id = ?').get(userId)
     void sendMail({
       to: email,
       subject: '¡Bienvenido/a a UnFocus!',
@@ -954,7 +979,7 @@ const cancelExpiredPendingOrders = () => {
 cancelExpiredPendingOrders()
 setInterval(cancelExpiredPendingOrders, 60 * 60 * 1000).unref()
 
-app.post('/api/orders', requireAuth, (request, response) => {
+app.post('/api/orders', resolveCheckoutUser, (request, response) => {
   try {
     if (request.body.paymentMethod !== 'transfer') throw new Error('Elige un medio de pago válido.')
     if (request.body.acceptTerms !== true) throw new Error('Debes aceptar los términos y condiciones para continuar.')
@@ -1186,7 +1211,7 @@ app.post('/api/products/:slug/reviews', requireAuth, (request, response) => {
   }
 })
 
-app.post('/api/payments/create-preference', requireAuth, async (request, response) => {
+app.post('/api/payments/create-preference', resolveCheckoutUser, async (request, response) => {
   if (!mercadoPagoClient) return response.status(503).json({ error: 'Mercado Pago no está configurado. Define MP_ACCESS_TOKEN en tu entorno.' })
   if (!isProduction && !mercadoPagoIsTestMode) return response.status(503).json({ error: 'Configura MP_ENVIRONMENT=test para usar credenciales de prueba en desarrollo.' })
   let order

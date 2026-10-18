@@ -3,13 +3,15 @@ import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { apiRequest, type AccountUser, type ShippingDetails, type StoreConfig } from './api'
 
 export type PaymentMethod = 'mercadopago' | 'transfer'
+export type GuestDetails = { name: string; email: string; phone: string }
+export type CheckoutPayload = { shipping: ShippingDetails; acceptTerms: boolean; paymentMethod: PaymentMethod; guest?: GuestDetails }
 import { calculateShipping } from './shipping'
 import { formatPrice, type DisplayCurrency } from './catalog'
 
 const provinces = ['Buenos Aires', 'Ciudad Autónoma de Buenos Aires', 'Catamarca', 'Chaco', 'Chubut', 'Córdoba', 'Corrientes', 'Entre Ríos', 'Formosa', 'Jujuy', 'La Pampa', 'La Rioja', 'Mendoza', 'Misiones', 'Neuquén', 'Río Negro', 'Salta', 'San Juan', 'San Luis', 'Santa Cruz', 'Santa Fe', 'Santiago del Estero', 'Tierra del Fuego', 'Tucumán']
 
 type CheckoutFormProps = {
-  user: AccountUser
+  user: AccountUser | null
   subtotal: number
   shipping: StoreConfig['shipping'] | null
   transfer: StoreConfig['transfer']
@@ -18,16 +20,21 @@ type CheckoutFormProps = {
   isSubmitting: boolean
   onBack: () => void
   onOpenTerms: () => void
-  onSubmit: (shipping: ShippingDetails, acceptTerms: boolean, paymentMethod: PaymentMethod) => void
+  onRequestLogin: () => void
+  onSubmit: (payload: CheckoutPayload) => void
 }
 
-function CheckoutForm({ user, subtotal, shipping, transfer, currency, usdArsRate, isSubmitting, onBack, onOpenTerms, onSubmit }: CheckoutFormProps) {
-  const [form, setForm] = useState<ShippingDetails>({ method: 'delivery', name: user.name, phone: user.phone ?? '', street: '', city: '', province: '', postalCode: '', notes: '' })
+function CheckoutForm({ user, subtotal, shipping, transfer, currency, usdArsRate, isSubmitting, onBack, onOpenTerms, onRequestLogin, onSubmit }: CheckoutFormProps) {
+  const [form, setForm] = useState<ShippingDetails>({ method: 'delivery', name: user?.name ?? '', phone: user?.phone ?? '', street: '', city: '', province: '', postalCode: '', notes: '' })
+  const [guestEmail, setGuestEmail] = useState('')
   const [acceptTerms, setAcceptTerms] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('mercadopago')
   const canPickup = Boolean(shipping?.pickupAddress)
 
+  const isGuest = !user
+
   useEffect(() => {
+    if (isGuest) return
     let isCurrent = true
     apiRequest<{ shipping: ShippingDetails | null }>('/api/account/shipping')
       .then(({ shipping: saved }) => {
@@ -36,13 +43,18 @@ function CheckoutForm({ user, subtotal, shipping, transfer, currency, usdArsRate
       })
       .catch(() => undefined)
     return () => { isCurrent = false }
-  }, [canPickup])
+  }, [canPickup, isGuest])
 
   const shippingCost = calculateShipping(subtotal, form.method, shipping)
   const update = (field: keyof ShippingDetails, value: string) => setForm((current) => ({ ...current, [field]: value }))
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    onSubmit(form, acceptTerms, paymentMethod === 'transfer' && !transfer ? 'mercadopago' : paymentMethod)
+    onSubmit({
+      shipping: form,
+      acceptTerms,
+      paymentMethod: paymentMethod === 'transfer' && !transfer ? 'mercadopago' : paymentMethod,
+      ...(isGuest ? { guest: { name: form.name, email: guestEmail, phone: form.phone } } : {}),
+    })
   }
   const isDelivery = form.method === 'delivery'
 
@@ -50,6 +62,12 @@ function CheckoutForm({ user, subtotal, shipping, transfer, currency, usdArsRate
     <form className="checkout-form" onSubmit={submit}>
       <button className="checkout-form__back" type="button" onClick={onBack}><ArrowLeft size={14} aria-hidden="true" /> Volver a la bolsa</button>
       <h3>Datos de entrega</h3>
+      {isGuest && (
+        <div className="checkout-form__guest">
+          <p>Compras como invitado: no necesitas crear una cuenta. <button type="button" onClick={onRequestLogin}>?Ya tienes cuenta? Inicia sesi?n</button></p>
+          <label><span>Correo electr?nico</span><input required type="email" maxLength={254} autoComplete="email" value={guestEmail} onChange={(event) => setGuestEmail(event.target.value)} /></label>
+        </div>
+      )}
       {canPickup && (
         <fieldset className="checkout-form__methods">
           <legend>Cómo quieres recibirlo</legend>

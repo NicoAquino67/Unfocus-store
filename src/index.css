@@ -39,3 +39,11 @@ img { display: block; max-width: 100%; }
 .product-detail__main-image { overflow: hidden; cursor: zoom-in; }
 .product-detail__main-image.is-zooming { cursor: zoom-out; }
 .product-detail__main-image.is-zooming img { transform: scale(2.2); transition: transform-origin 0s; animation: none; }
+
+.checkout-form__guest { display: grid; gap: 10px; padding: 12px; border: 1px solid rgba(0,0,0,.12); }
+.checkout-form__guest p { margin: 0; font-size: .85rem; }
+.checkout-form__guest button { background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; font: inherit; }
+
+.checkout-form__guest { display: grid; gap: 10px; padding: 12px; border: 1px solid rgba(0,0,0,.12); }
+.checkout-form__guest p { margin: 0; font-size: .85rem; }
+.checkout-form__guest button { background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; font: inherit; }
