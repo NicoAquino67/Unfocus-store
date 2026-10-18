@@ -55,6 +55,12 @@ Se envían por SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SM
 - **Compra como invitado**: sin cuenta, con nombre, email y teléfono; si el email ya tiene cuenta se pide iniciar sesión. Al registrarse con ese email se heredan los pedidos.
 - **Cupones**: porcentaje o monto fijo, mínimo de compra, usos máximos y vencimiento; se administran en el panel admin. No aplican a tarjetas de regalo.
 - **Tarjeta de regalo**: producto digital de 30.000 a 1.000.000 ARS (montos predefinidos o libre). Al confirmarse el pago se envía por email un código `GC-XXXX-XXXX-XXXX`, canjeable (parcial o total) en el checkout. El admin ve las tarjetas emitidas y su saldo.
+- **Descuentos por producto**: el admin define un descuento porcentual (1-90 %) o en pesos sobre el precio original, que nunca se modifica. Se muestra el precio tachado, el final y la etiqueta -X %; el servidor cobra siempre el precio con descuento.
+- **Accesibilidad (WCAG 2.2 AA)**: enlace "Saltar al contenido", contraste de texto >= 4,5:1, objetivos t
+á
+ctiles >= 24 px, bolsa como di
+á
+logo con foco atrapado y Escape, nombres accesibles coherentes con el texto visible y `prefers-reduced-motion`. Auditado con axe-core sin violaciones en tienda, bolsa y panel admin.
 
 ### Páginas legales
 

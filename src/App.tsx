@@ -20,7 +20,8 @@ import {
 } from 'lucide-react'
 import unfocusLogo from '../ident/png full color.png'
 import unfocusLogoWhite from '../ident/png blanco.png'
-import { categories, formatPrice, getDefaultSize, getProductImage, getProductFacets, getStockForSize, giftCardAmounts, giftCardMaximum, giftCardMinimum, isValidGiftCardAmount, initialProducts, normalizeProductFacets, garmentCuts, productAudiences, productGenders, sizes, type CategoryFilter, type DisplayCurrency, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
+import PriceTag from './PriceTag'
+import { categories, getSalePrice, formatPrice, getDefaultSize, getProductImage, getProductFacets, getStockForSize, giftCardAmounts, giftCardMaximum, giftCardMinimum, isValidGiftCardAmount, initialProducts, normalizeProductFacets, garmentCuts, productAudiences, productGenders, sizes, type CategoryFilter, type DisplayCurrency, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
 import { apiRequest, type AccountNotification, type AccountSummary, type AccountUser, type ProductReview, type StoreConfig } from './api'
 import AccountPanel from './AccountPanel'
 import ProductAdmin from './ProductAdmin'
@@ -176,7 +177,7 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
         <div className="product-detail__info">
           <p className="eyebrow">UnFocus · Diseño original</p>
           <h1 id="product-detail-title">{product.name}</h1>
-          <p className="product-detail__price">{formatPrice(product.price, currency, usdArsRate)}</p>
+          <p className="product-detail__price"><PriceTag product={product} currency={currency} usdArsRate={usdArsRate} /></p>
           <p className="product-detail__description">{product.description}</p>
           <div className="product-detail__story"><h2>Sobre el diseño</h2><p>{product.designDescription}</p></div>
           {product.isGiftCard ? <p className="product-detail__gift-note">Sin vencimiento. El código llega por correo apenas se confirma el pago y se canjea en el checkout, por partes si quieres.</p> : <dl className="product-detail__specs"><div><dt>Composición</dt><dd>{product.composition}</dd></div><div><dt>Tallas disponibles</dt><dd>XS–3XL</dd></div><div><dt>Estampado</dt><dd>Frente y espalda</dd></div></dl>}
@@ -206,7 +207,7 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
               {sizes.map((size) => {
                 const outOfStock = getStockForSize(product, size) <= 0
                 return (
-                  <button className={selectedSize === size ? 'is-active' : ''} key={size} type="button" onClick={() => onSizeChange(size)} disabled={outOfStock} aria-pressed={selectedSize === size} aria-label={`${size}, talle argentino ${argentineSizeEquivalents[size]}${outOfStock ? ', sin stock' : ''}`}>
+                  <button className={selectedSize === size ? 'is-active' : ''} key={size} type="button" onClick={() => onSizeChange(size)} disabled={outOfStock} aria-pressed={selectedSize === size} aria-label={`${size} ${argentineSizeEquivalents[size]}${outOfStock ? ' Sin stock' : ''}`}>
                     <span><strong>{size}</strong><small>{argentineSizeEquivalents[size]}</small></span>
                     {outOfStock && <small className="product-detail__size-stock">Sin stock</small>}
                   </button>
@@ -255,7 +256,7 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
             {relatedProducts.map((relatedProduct) => (
               <article className="related-product" key={relatedProduct.id}>
                 <button className="related-product__image" type="button" onClick={() => onSelectRelated(relatedProduct)} aria-label={`Ver ${relatedProduct.name}`}><img src={getProductImage(relatedProduct)} alt={relatedProduct.gallery?.[0]?.alt ?? relatedProduct.alt} loading="lazy" /></button>
-                <div className="related-product__details"><p className="product-card__category">{relatedProduct.category}</p><h3><button type="button" onClick={() => onSelectRelated(relatedProduct)}>{relatedProduct.name}</button></h3><span>{formatPrice(relatedProduct.price, currency, usdArsRate)}</span></div>
+                <div className="related-product__details"><p className="product-card__category">{relatedProduct.category}</p><h3><button type="button" onClick={() => onSelectRelated(relatedProduct)}>{relatedProduct.name}</button></h3><span><PriceTag product={relatedProduct} currency={currency} usdArsRate={usdArsRate} /></span></div>
                 <button className="related-product__link" type="button" onClick={() => onSelectRelated(relatedProduct)}>Ver producto <ArrowRight size={15} aria-hidden="true" /></button>
               </article>
             ))}
@@ -389,7 +390,7 @@ function ProductCard({ product, index, isFavorite, selectedSize, currency, usdAr
           <h3><button className="product-title-link" type="button" onClick={() => onOpenProduct(product)}><span className="product-card__title-stroke">{product.name}</span></button></h3>
           <div className="product-feature-list"><span>{product.composition}</span></div>
           <label className="product-size"><span>{product.isGiftCard ? 'Monto' : 'Talla'}</span><select value={selectedSize} onChange={(event) => onSizeChange(event.target.value)} aria-label={`${product.isGiftCard ? 'Monto' : 'Talla'} para ${product.name}`}>{product.isGiftCard ? giftCardAmounts.map((amount) => <option key={amount} value={String(amount)}>{formatPrice(amount, currency, usdArsRate)}</option>) : sizes.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
-          <span className="product-card__price">{product.isGiftCard ? `Desde ${formatPrice(product.price, currency, usdArsRate)}` : formatPrice(product.price, currency, usdArsRate)}</span>
+          <span className="product-card__price">{product.isGiftCard ? `Desde ${formatPrice(product.price, currency, usdArsRate)}` : <PriceTag product={product} currency={currency} usdArsRate={usdArsRate} />}</span>
         </div>
       </div>
     </article>
@@ -438,6 +439,7 @@ function App() {
   const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>('ARS')
   const [usdArsRate, setUsdArsRate] = useState<number | null>(null)
   const [exchangeSource, setExchangeSource] = useState<string | null>(null)
+  const cartDrawerRef = useRef<HTMLElement>(null)
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>('Todo')
   const [cutFilter, setCutFilter] = useState<GarmentCut | 'Todas'>('Todas')
   const [audienceFilter, setAudienceFilter] = useState<ProductAudience | 'Todos'>('Todos')
@@ -533,6 +535,26 @@ function App() {
     }
   }, [isNotificationMenuOpen])
 
+  // Diálogo de la bolsa: foco dentro, Escape para cerrar, Tab atrapado y foco devuelto al abrirlo (WCAG 2.1.2 / 2.4.3).
+  useEffect(() => {
+    if (!isCartOpen) return
+    const opener = document.activeElement as HTMLElement | null
+    const drawer = cartDrawerRef.current
+    drawer?.focus()
+    const handleKeys = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setIsCartOpen(false); setCheckoutStep('bag'); return }
+      if (event.key !== 'Tab' || !drawer) return
+      const focusable = Array.from(drawer.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+      if (!focusable.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === drawer)) { event.preventDefault(); last.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', handleKeys)
+    return () => { document.removeEventListener('keydown', handleKeys); opener?.focus() }
+  }, [isCartOpen])
+
   useEffect(() => {
     let isCurrent = true
     apiRequest<StoreConfig>('/api/config')
@@ -582,8 +604,8 @@ function App() {
       return matchesCategory && matchesCut && matchesAudience && matchesGender && matchesSearch
     })
     .sort((first, second) => {
-      if (sortOrder === 'price-asc') return first.price - second.price
-      if (sortOrder === 'price-desc') return second.price - first.price
+      if (sortOrder === 'price-asc') return getSalePrice(first) - getSalePrice(second)
+      if (sortOrder === 'price-desc') return getSalePrice(second) - getSalePrice(first)
       if (sortOrder === 'newest') return (second.createdAt ?? '').localeCompare(first.createdAt ?? '') || second.id - first.id
       if (sortOrder === 'popular') return (second.sold ?? 0) - (first.sold ?? 0) || first.id - second.id
       return first.id - second.id
@@ -593,7 +615,7 @@ function App() {
   const cartItems = Object.entries(cart).flatMap(([cartKey, quantity]) => {
     const [productId, size] = cartKey.split(':')
     const product = products.find((item) => item.id === Number(productId))
-    return product ? [{ ...product, price: product.isGiftCard ? Number(size) : product.price, size, quantity, cartKey }] : []
+    return product ? [{ ...product, price: product.isGiftCard ? Number(size) : getSalePrice(product), size, quantity, cartKey }] : []
   })
   const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0)
   const cartTotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0)
@@ -859,6 +881,7 @@ function App() {
 
   return (
     <div className="storefront">
+      <a className="skip-link" href="#inicio">Saltar al contenido principal</a>
       <div className="announcement-bar">
         <span>Ropa cómoda. Información clara. Elige a tu ritmo.</span>
         <span className="announcement-bar__right">Precios en pesos argentinos · USD disponible</span>
@@ -893,14 +916,14 @@ function App() {
                 ))}</div> : <p className="notification-center__empty">No tenés avisos nuevos.</p>}
               </div>}
             </div>}
-            <button className="bag-trigger" type="button" onClick={() => setIsCartOpen(true)} aria-label={`Abrir bolsa, ${cartCount} artículos`}>
-              <ShoppingBag size={19} strokeWidth={1.8} aria-hidden="true" /><span>Bolsa</span><span className="bag-count">{cartCount}</span>
+            <button className="bag-trigger" type="button" onClick={() => setIsCartOpen(true)}> 
+              <ShoppingBag size={19} strokeWidth={1.8} aria-hidden="true" /><span>Bolsa</span><span className="bag-count">{cartCount}<span className="visually-hidden"> artículos</span></span>
             </button>
           </div>
         </div>
       </header>
 
-      <main id="inicio">
+      <main id="inicio" tabIndex={-1}>
         {isAdminPage && currentUser?.isAdmin ? <ProductAdmin products={products} onSave={saveProduct} onDelete={deleteProduct} onClose={navigateToStore} /> : isAccountPage || isAdminPage ? (
           <AccountPanel user={currentUser} authLoading={authLoading} currency={displayCurrency} usdArsRate={usdArsRate} onAuthenticated={handleAuthenticated} onLogout={handleLogout} onOpenProduct={navigateToProduct} onOpenAdmin={navigateToAdmin} onToggleFavorite={toggleFavorite} />
         ) : legalPage ? <LegalPages page={legalPage} store={storeConfig?.store ?? null} onBack={navigateToStore} onOpenPage={navigateToLegal} onOpenContact={navigateToContact} /> : isContactPage ? <ContactPage onBack={navigateToStore} /> : activeProduct ? (
@@ -1025,7 +1048,7 @@ function App() {
 
       {isCartOpen && (
         <div className="cart-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) setIsCartOpen(false) }}>
-          <aside className="cart-drawer" role="dialog" aria-modal="true" aria-labelledby="cart-title">
+          <aside className="cart-drawer" ref={cartDrawerRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="cart-title">
             <div className="cart-header"><div><p className="eyebrow">Tu selección</p><h2 id="cart-title">La bolsa <span>({cartCount})</span></h2></div><button className="icon-button" type="button" onClick={() => { setIsCartOpen(false); setCheckoutStep('bag') }} aria-label="Cerrar bolsa"><X size={21} /></button></div>
             {cartItems.length > 0 && checkoutStep === 'delivery' ? (
               <CheckoutForm user={currentUser} subtotal={cartTotal} items={cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity }))} shipping={storeConfig?.shipping ?? null} transfer={storeConfig?.transfer ?? null} currency={displayCurrency} usdArsRate={usdArsRate} isSubmitting={isCheckingOut} onBack={() => setCheckoutStep('bag')} onOpenTerms={() => navigateToLegal('terminos')} digitalOnly={cartItems.every((item) => item.isGiftCard)} onRequestLogin={() => { setIsCartOpen(false); setCheckoutStep('bag'); navigateToAccount() }} onSubmit={(payload) => { void handleCheckout(payload) }} />

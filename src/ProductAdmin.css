@@ -98,7 +98,7 @@
 .admin-contact-message__body p { margin: 0; color: var(--ink-soft); font-size: 11px; line-height: 1.6; white-space: pre-wrap; }
 .admin-contact-message__body > span { font-size: 9px; }
 .admin-contact-message__body .is-email-sent { color: #287044; }
-.admin-contact-message__body .is-email-pending { color: #976413; }
+.admin-contact-message__body .is-email-pending { color: #8a5a00; }
 .admin-contact-message__body button { display: inline-flex; align-items: center; gap: 5px; justify-self: end; padding: 5px 0; border: 0; background: transparent; color: var(--brand-blue-deep); font: 600 9px var(--sans); cursor: pointer; }
 .admin-editor__footer { display: flex; justify-content: flex-end; gap: 10px; padding: 20px 0 0; }
 .admin-editor__footer .button { min-height: 40px; }
@@ -128,3 +128,19 @@
 .admin-settings-panel__message { margin: 12px 0 0; color: var(--brand-blue-deep); font-size: 12px; }
 
 .admin-hint { margin: 0 0 8px; color: #666; font-size: 12px; }
+
+.admin-field__hint { color: var(--muted); font-size: 12px; }
+.admin-gallery { margin: 0; padding: 16px; border: 1px solid var(--line); background: #fff; min-width: 0; }
+.admin-gallery legend { padding: 0 6px; color: var(--ink); font-size: 13px; font-weight: 600; }
+.admin-gallery__help { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
+.admin-gallery__list { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 14px; margin: 0; padding: 0; list-style: none; }
+.admin-gallery__item { display: grid; gap: 6px; }
+.admin-gallery__item img { width: 100%; aspect-ratio: 4 / 5; object-fit: contain; background: var(--paper); }
+.admin-gallery__name { color: var(--ink); font-size: 12px; font-weight: 600; }
+.admin-gallery__actions { display: flex; gap: 6px; }
+.admin-gallery__button { display: inline-grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--line); background: #fff; color: var(--brand-blue-deep); cursor: pointer; }
+.admin-gallery__button:hover { background: var(--paper); }
+.admin-gallery__button:focus-within, .admin-gallery__button:focus-visible, .admin-gallery__add:focus-within { outline: 3px solid var(--brand-blue-deep); outline-offset: 2px; }
+.admin-gallery__item--add { align-self: stretch; }
+.admin-gallery__add { display: grid; place-content: center; justify-items: center; gap: 8px; min-height: 140px; height: 100%; border: 2px dashed var(--line); color: var(--brand-blue-deep); font-size: 12px; font-weight: 600; cursor: pointer; text-align: center; }
+.admin-gallery__add:hover { background: var(--paper); }

@@ -205,6 +205,8 @@ const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().m
   if (!columns.has('stock')) database.exec('ALTER TABLE products ADD COLUMN stock INTEGER NOT NULL DEFAULT 0')
   if (!userColumns.has('is_guest')) database.exec('ALTER TABLE users ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0')
   if (!columns.has('is_gift_card')) database.exec('ALTER TABLE products ADD COLUMN is_gift_card INTEGER NOT NULL DEFAULT 0')
+  if (!columns.has('discount_type')) database.exec("ALTER TABLE products ADD COLUMN discount_type TEXT NOT NULL DEFAULT 'none'")
+  if (!columns.has('discount_value')) database.exec('ALTER TABLE products ADD COLUMN discount_value INTEGER NOT NULL DEFAULT 0')
   if (!columns.has('extra_images')) database.exec("ALTER TABLE products ADD COLUMN extra_images TEXT NOT NULL DEFAULT '[]'")
   if (!columns.has('stock_by_size')) database.exec("ALTER TABLE products ADD COLUMN stock_by_size TEXT NOT NULL DEFAULT '{}' ")
   database.exec(`
@@ -429,12 +431,22 @@ const parseExtraImages = (value) => {
   }
 }
 
+// El precio original (price_ars) no se modifica nunca: el descuento se aplica encima.
+const computeSalePrice = (price, type, value) => {
+  if (type === 'percent') return Math.max(1, Math.round(price * (100 - value) / 100))
+  if (type === 'fixed') return Math.max(1, price - value)
+  return price
+}
+
 const productFromRow = (row) => ({
   id: row.id,
   slug: row.slug,
   name: row.name,
   category: row.category,
   price: row.price_ars,
+  discountType: row.discount_type || 'none',
+  discountValue: Number(row.discount_value ?? 0),
+  salePrice: computeSalePrice(row.price_ars, row.discount_type, Number(row.discount_value ?? 0)),
   stock: Number(row.stock ?? 0),
   stockBySize: (() => {
     try { return JSON.parse(row.stock_by_size || '{}') } catch { return {} }
@@ -799,17 +811,21 @@ const validateProduct = (body) => {
   const description = typeof body.description === 'string' ? body.description.trim() : ''
   const designDescription = typeof body.designDescription === 'string' ? body.designDescription.trim() : ''
   const category = typeof body.category === 'string' ? body.category.trim() : ''
+  const discountType = ['percent', 'fixed'].includes(body.discountType) ? body.discountType : 'none'
+  const discountValue = discountType === 'none' ? 0 : Number(body.discountValue)
   const gallery = body.gallery
   if (name.length < 2 || name.length > 80) throw new Error('El nombre debe tener entre 2 y 80 caracteres.')
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) throw new Error('El enlace del producto no es válido.')
   if (!Number.isSafeInteger(price) || price < 1) throw new Error('El precio debe ser un importe entero en pesos argentinos.')
+  if (discountType === 'percent' && (!Number.isInteger(discountValue) || discountValue < 1 || discountValue > 90)) throw new Error('El descuento porcentual debe ser un entero entre 1 y 90.')
+  if (discountType === 'fixed' && (!Number.isInteger(discountValue) || discountValue < 1 || discountValue >= price)) throw new Error('El descuento en pesos debe ser un entero menor al precio original.')
   if (hasInvalidSizeStock || !Number.isSafeInteger(stock) || stock < 0) throw new Error('El stock por talle debe contener números enteros mayores o iguales a cero.')
   if (!category || category.length > 50) throw new Error('La categoría no es válida.')
   if (!composition || composition.length > 100) throw new Error('La composición es obligatoria.')
   if (!description || description.length > 500) throw new Error('La descripción debe tener hasta 500 caracteres.')
   if (!designDescription || designDescription.length > 500) throw new Error('La descripción del diseño debe tener hasta 500 caracteres.')
   if (!Array.isArray(gallery) || gallery.length < minimumProductImages || gallery.length > maximumProductImages) throw new Error(`Sube entre ${minimumProductImages} y ${maximumProductImages} imágenes del producto.`)
-  return { name, slug, price, stock, stockBySize, composition, description, designDescription, category, gallery }
+  return { name, slug, price, discountType, discountValue, stock, stockBySize, composition, description, designDescription, category, gallery }
 }
 
 const requireProductBody = async (body) => {
@@ -827,24 +843,24 @@ const requireProductBody = async (body) => {
     backImage,
     backAlt: String(product.gallery[1].alt || `Espalda de ${product.name}`).slice(0, 200),
     extraImages,
-    badge: typeof body.badge === 'string' ? body.badge.slice(0, 80) : '',
+    badge: product.discountType === 'none' ? '' : 'PROMO',
     features: Array.isArray(body.features) ? body.features.filter((feature) => typeof feature === 'string').slice(0, 12) : [product.composition],
   }
 }
 
 const insertProduct = database.prepare(`
-  INSERT INTO products (slug, name, category, price_ars, stock, stock_by_size, composition, features_json, description, design_description, front_image, front_alt, back_image, back_alt, badge, extra_images)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO products (slug, name, category, price_ars, stock, stock_by_size, composition, features_json, description, design_description, front_image, front_alt, back_image, back_alt, badge, extra_images, discount_type, discount_value)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `)
 const updateProduct = database.prepare(`
-  UPDATE products SET slug = ?, name = ?, category = ?, price_ars = ?, stock = ?, stock_by_size = ?, composition = ?, features_json = ?, description = ?, design_description = ?, front_image = ?, front_alt = ?, back_image = ?, back_alt = ?, badge = ?, extra_images = ?, updated_at = CURRENT_TIMESTAMP
+  UPDATE products SET slug = ?, name = ?, category = ?, price_ars = ?, stock = ?, stock_by_size = ?, composition = ?, features_json = ?, description = ?, design_description = ?, front_image = ?, front_alt = ?, back_image = ?, back_alt = ?, badge = ?, extra_images = ?, discount_type = ?, discount_value = ?, updated_at = CURRENT_TIMESTAMP
   WHERE id = ?
 `)
 
 app.post('/api/admin/products', requireAdmin, async (request, response) => {
   try {
     const product = await requireProductBody(request.body)
-    const result = insertProduct.run(product.slug, product.name, product.category, product.price, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages))
+    const result = insertProduct.run(product.slug, product.name, product.category, product.price, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue)
     response.status(201).json({ product: productFromRow(selectProductById.get(Number(result.lastInsertRowid))) })
   } catch (error) {
     response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un producto con ese enlace.' : error.message })
@@ -856,7 +872,7 @@ app.put('/api/admin/products/:id', requireAdmin, async (request, response) => {
   if (!Number.isSafeInteger(id) || !selectProductById.get(id)) return response.status(404).json({ error: 'Producto no encontrado.' })
   try {
     const product = await requireProductBody(request.body)
-    updateProduct.run(product.slug, product.name, product.category, product.price, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), id)
+    updateProduct.run(product.slug, product.name, product.category, product.price, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue, id)
     response.json({ product: productFromRow(selectProductById.get(id)) })
   } catch (error) {
     response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un producto con ese enlace.' : error.message })
@@ -981,9 +997,9 @@ const buildOrderFromItems = (items, userId) => {
     }
     const stockForSize = Number(product.stockBySize?.[item.size] ?? 0)
     if (stockForSize < quantity) throw new Error(`No hay stock suficiente para ${product.name} en talla ${item.size}.`)
-    total += product.price * quantity
-    eligibleSubtotal += product.price * quantity
-    orderItems.push({ product, quantity, size: item.size, unitPrice: product.price })
+    total += product.salePrice * quantity
+    eligibleSubtotal += product.salePrice * quantity
+    orderItems.push({ product, quantity, size: item.size, unitPrice: product.salePrice })
   }
   const reference = `UF-${new Date().getFullYear()}-${randomBytes(3).toString('hex').toUpperCase()}`
   return { orderItems, total, eligibleSubtotal, reference, userId }

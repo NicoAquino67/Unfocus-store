@@ -12,6 +12,9 @@ export type Product = {
   name: string
   category: Category
   price: number
+  discountType?: 'none' | 'percent' | 'fixed'
+  discountValue?: number
+  salePrice?: number
   image?: string
   alt: string
   features: string[]
@@ -74,6 +77,9 @@ export const isValidGiftCardAmount = (value: string) => /^\d+$/.test(value) && N
 
 // En las tarjetas de regalo el "talle" es el monto en ARS y no hay stock que agotar.
 export const getDefaultSize = (product: Product) => product.isGiftCard ? '50000' : 'M'
+export const getSalePrice = (product: Product) => product.salePrice ?? product.price
+export const hasDiscount = (product: Product) => !product.isGiftCard && getSalePrice(product) < product.price
+
 export const getStockForSize = (product: Product, size: string) => product.isGiftCard ? 999 : Number(product.stockBySize?.[size] ?? 0)
 
 export const formatPrice = (price: number, currency: DisplayCurrency = 'ARS', usdArsRate: number | null = null) => {

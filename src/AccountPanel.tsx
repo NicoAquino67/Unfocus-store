@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowRight, Eye, EyeOff, Heart, LogOut, PackageCheck, ShieldCheck, UserRound } from 'lucide-react'
 import { apiRequest, type AccountOrder, type AccountSummary, type AccountUser } from './api'
+import PriceTag from './PriceTag'
 import { formatPrice, getProductImage, type DisplayCurrency, type Product } from './catalog'
 import './AccountPanel.css'
 
@@ -122,7 +123,7 @@ function AccountPanel({ user, authLoading, currency, usdArsRate, onAuthenticated
   const renderProduct = (product: Product, isFavorite = false) => (
     <article className="account-product" key={product.id}>
       <button className="account-product__image" type="button" onClick={() => onOpenProduct(product)} aria-label={`Ver ${product.name}`}><img src={getProductImage(product)} alt={product.gallery?.[0]?.alt ?? product.alt} loading="lazy" /></button>
-      <div className="account-product__details"><p className="product-card__category">{product.category}</p><h3><button type="button" onClick={() => onOpenProduct(product)}>{product.name}</button></h3><span>{formatPrice(product.price, currency, usdArsRate)}</span></div>
+      <div className="account-product__details"><p className="product-card__category">{product.category}</p><h3><button type="button" onClick={() => onOpenProduct(product)}>{product.name}</button></h3><span><PriceTag product={product} currency={currency} usdArsRate={usdArsRate} /></span></div>
       {isFavorite && <button className="account-product__remove" type="button" onClick={async () => { await onToggleFavorite(product); setSummary((current) => current ? { ...current, favorites: current.favorites.filter((item) => item.id !== product.id) } : current) }} aria-label={`Quitar ${product.name} de favoritos`} title="Quitar de favoritos"><Heart size={17} fill="currentColor" /></button>}
       {!isFavorite && <button className="account-product__link" type="button" onClick={() => onOpenProduct(product)}>Ver prenda <ArrowRight size={14} aria-hidden="true" /></button>}
     </article>

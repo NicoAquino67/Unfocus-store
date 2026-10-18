@@ -3,7 +3,7 @@ import { ArrowLeft, Check, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lu
 import AdminCoupons from './AdminCoupons'
 import AdminGiftCards from './AdminGiftCards'
 import { apiRequest, type AdminOrder, type AdminSummary, type ContactMessage, type NewsletterSubscriber, type OrderStatus, type StoreSettings } from './api'
-import { formatPrice, getProductFacets, getProductImage, garmentCuts, productAudiences, productGenders, productFacetTag, sizes, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
+import { formatPrice, getSalePrice, hasDiscount, getProductFacets, getProductImage, garmentCuts, productAudiences, productGenders, productFacetTag, sizes, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
 import './ProductAdmin.css'
 
 type ProductDraft = {
@@ -16,7 +16,8 @@ type ProductDraft = {
   cut: GarmentCut
   audience: ProductAudience
   gender: ProductGender
-  isPromotion: boolean
+  discountType: 'none' | 'percent' | 'fixed'
+  discountValue: string
   description: string
   designDescription: string
   images: string[]
@@ -42,7 +43,8 @@ const emptyDraft = (): ProductDraft => ({
   cut: 'Regular fit',
   audience: 'Adultos',
   gender: 'Unisex',
-  isPromotion: false,
+  discountType: 'none',
+  discountValue: '',
   description: '',
   designDescription: '',
   images: [],
@@ -60,7 +62,8 @@ const productToDraft = (product: Product): ProductDraft => {
     cut: facets.cut,
     audience: facets.audience,
     gender: facets.gender,
-    isPromotion: Boolean(product.badge && product.badge !== 'Diseño UnFocus'),
+    discountType: product.discountType ?? 'none',
+    discountValue: product.discountValue ? String(product.discountValue) : '',
     description: product.description,
     designDescription: product.designDescription,
     images: product.gallery?.length ? product.gallery.map((view) => view.src) : [getProductImage(product, 0), getProductImage(product, 1)],
@@ -133,7 +136,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
   const filteredProducts = products.filter((product) =>
     `${product.name} ${product.description}`.toLocaleLowerCase('es').includes(query.toLocaleLowerCase('es').trim()),
   )
-  const inventoryValue = products.reduce((total, product) => total + product.price, 0)
+  const inventoryValue = products.reduce((total, product) => total + getSalePrice(product), 0)
 
   const handleImages = async (files: File[], replaceIndex?: number) => {
     if (!files.length) return
@@ -177,6 +180,8 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
       name,
       category: existingProduct?.category ?? 'Camisetas',
       price: Number(draft.price),
+      discountType: draft.discountType,
+      discountValue: draft.discountType === 'none' ? 0 : Number(draft.discountValue),
       alt: `Camiseta UnFocus ${name}`,
       features: [
         ...(composition ? [composition] : []),
@@ -193,7 +198,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
         alt: `${index === 0 ? 'Frente' : index === 1 ? 'Espalda' : 'Vista ' + (index + 1)} de la camiseta ${name}`,
         label: index === 0 ? 'Frente' : index === 1 ? 'Espalda' : `Vista ${index + 1}`,
       })),
-      badge: draft.isPromotion ? 'PROMO' : '',
+      badge: draft.discountType === 'none' ? '' : 'PROMO',
     }
     setIsSaving(true)
     try {
@@ -313,7 +318,18 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
             <label className="admin-field"><span>Corte y calce</span><select value={draft.cut} onChange={(event) => setDraft({ ...draft, cut: event.target.value as GarmentCut })}>{garmentCuts.map((cut) => <option key={cut} value={cut}>{cut}</option>)}</select></label>
             <label className="admin-field"><span>Público por edad</span><select value={draft.audience} onChange={(event) => setDraft({ ...draft, audience: event.target.value as ProductAudience })}>{productAudiences.map((audience) => <option key={audience} value={audience}>{audience}</option>)}</select></label>
             <label className="admin-field"><span>Género</span><select value={draft.gender} onChange={(event) => setDraft({ ...draft, gender: event.target.value as ProductGender })}>{productGenders.map((gender) => <option key={gender} value={gender}>{gender}</option>)}</select></label>
-            <label className="admin-promotion-toggle"><input type="checkbox" checked={draft.isPromotion} onChange={(event) => setDraft({ ...draft, isPromotion: event.target.checked })} /><span>Producto en promoción: mostrar distintivo azul</span></label>
+            <label className="admin-field"><span>Descuento promocional</span><select value={draft.discountType} onChange={(event) => setDraft({ ...draft, discountType: event.target.value as ProductDraft['discountType'], discountValue: '' })}><option value="none">Sin descuento</option><option value="percent">Porcentaje (%)</option><option value="fixed">Monto fijo (ARS)</option></select></label>
+            {draft.discountType !== 'none' && (() => {
+              const price = Number(draft.price)
+              const value = Number(draft.discountValue)
+              const preview = draft.discountType === 'percent' ? Math.round(price * (100 - value) / 100) : price - value
+              return (
+                <label className="admin-field"><span>{draft.discountType === 'percent' ? 'Descuento (%)' : 'Descuento (ARS)'}</span>
+                  <input required type="number" min="1" max={draft.discountType === 'percent' ? 90 : Math.max(1, price - 1)} step="1" value={draft.discountValue} onChange={(event) => setDraft({ ...draft, discountValue: event.target.value })} aria-describedby="discount-preview" />
+                  <small id="discount-preview" className="admin-field__hint">{price > 0 && value > 0 && preview > 0 ? `Precio final: ${formatPrice(preview)} (el precio original se conserva).` : 'Indica un descuento válido.'}</small>
+                </label>
+              )
+            })()}
             <div className="admin-field"><span>Stock por talla</span><div className="admin-size-stock-grid">{sizes.map((size) => (
               <label key={size} className="admin-size-stock-item"><span>{size}</span><input type="number" min="0" step="1" value={draft.stockBySize[size] ?? 0} onChange={(event) => setDraft((current) => current ? { ...current, stockBySize: { ...current.stockBySize, [size]: Number(event.target.value) } } : current)} /></label>
             ))}</div></div>
@@ -321,28 +337,30 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
             <label className="admin-field admin-field--wide"><span>Sobre el diseño</span><textarea required rows={3} maxLength={500} value={draft.designDescription} onChange={(event) => setDraft({ ...draft, designDescription: event.target.value })} placeholder="Cuenta qué representa el diseño." /></label>
           </div>
 
-          <div className="admin-field admin-field--wide">
-            <span>Imágenes del producto ({draft.images.length}/{maxProductImages}, mínimo {minProductImages}). La primera es el frente y la segunda la espalda.</span>
-            <div className="admin-upload-grid">
-              {draft.images.map((image, index) => (
-                <div className="admin-upload" key={`${index}-${image.slice(-24)}`}>
-                  <span className="admin-upload__label">{index === 0 ? 'Frente' : index === 1 ? 'Espalda' : `Imagen ${index + 1}`}</span>
-                  <span className="admin-upload__preview"><img src={image} alt={`Vista previa ${index + 1}`} /></span>
-                  <label className="admin-upload__action"><ImagePlus size={15} aria-hidden="true" /> Cambiar<input type="file" accept="image/*" hidden disabled={processingImage} onChange={(event) => { void handleImages(Array.from(event.currentTarget.files ?? []), index); event.currentTarget.value = '' }} /></label>
-                  <button className="admin-cancel-button" type="button" onClick={() => setDraft({ ...draft, images: draft.images.filter((_, imageIndex) => imageIndex !== index) })}><Trash2 size={14} aria-hidden="true" /> Quitar</button>
-                </div>
-              ))}
+          <fieldset className="admin-gallery">
+            <legend>Imágenes del producto ({draft.images.length}/{maxProductImages}, mínimo {minProductImages})</legend>
+            <p className="admin-gallery__help">La primera es el frente y la segunda la espalda. Se optimizan al subirlas.</p>
+            <ul className="admin-gallery__list">
+              {draft.images.map((image, index) => {
+                const label = index === 0 ? 'Frente' : index === 1 ? 'Espalda' : `Imagen ${index + 1}`
+                return (
+                  <li className="admin-gallery__item" key={`${index}-${image.slice(-24)}`}>
+                    <img src={image} alt={`Vista previa: ${label}`} />
+                    <span className="admin-gallery__name">{label}</span>
+                    <span className="admin-gallery__actions">
+                      <label className="admin-gallery__button"><ImagePlus size={15} aria-hidden="true" /><span className="visually-hidden">Cambiar {label}</span><input className="visually-hidden" type="file" accept="image/*" disabled={processingImage} onChange={(event) => { void handleImages(Array.from(event.currentTarget.files ?? []), index); event.currentTarget.value = '' }} /></label>
+                      <button className="admin-gallery__button" type="button" onClick={() => setDraft({ ...draft, images: draft.images.filter((_, imageIndex) => imageIndex !== index) })}><Trash2 size={15} aria-hidden="true" /><span className="visually-hidden">Quitar {label}</span></button>
+                    </span>
+                  </li>
+                )
+              })}
               {draft.images.length < maxProductImages && (
-                <label className="admin-upload">
-                  <span className="admin-upload__label">Añadir imágenes</span>
-                  <span className="admin-upload__preview"><ImagePlus size={26} strokeWidth={1.5} aria-hidden="true" /></span>
-                  <span className="admin-upload__action"><ImagePlus size={15} aria-hidden="true" /> {processingImage ? 'Procesando…' : 'Subir imágenes'}</span>
-                  <input type="file" accept="image/*" multiple disabled={processingImage} onChange={(event) => { void handleImages(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = '' }} />
-                  <span className="admin-upload__hint">Se optimizan al subirlas.</span>
-                </label>
+                <li className="admin-gallery__item admin-gallery__item--add">
+                  <label className="admin-gallery__add"><ImagePlus size={26} strokeWidth={1.5} aria-hidden="true" /><span>{processingImage ? 'Procesando…' : 'Subir imágenes'}</span><input className="visually-hidden" type="file" accept="image/*" multiple disabled={processingImage} onChange={(event) => { void handleImages(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = '' }} /></label>
+                </li>
               )}
-            </div>
-          </div>
+            </ul>
+          </fieldset>
 
           {formError && <p className="admin-form-error" role="alert">{formError}</p>}
           <div className="admin-editor__footer"><button className="admin-cancel-button" type="button" onClick={() => { setDraft(null); setFormError('') }}>Cancelar</button><button className="button button--coral" type="submit" disabled={processingImage || isSaving}><Check size={16} aria-hidden="true" /> {isSaving ? 'Guardando…' : 'Guardar producto'}</button></div>
@@ -355,7 +373,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
               <tr key={product.id}>
                 <td><div className="admin-product-cell"><img src={getProductImage(product)} alt="" /><div><strong>{product.name}</strong><span>{product.category} · {product.gallery?.length ?? 0} vistas</span></div></div></td>
                 <td>{product.composition}</td>
-                <td>{formatPrice(product.price)}</td>
+                <td>{hasDiscount(product) ? <><s>{formatPrice(product.price)}</s> <strong>{formatPrice(getSalePrice(product))}</strong></> : formatPrice(product.price)}</td>
                 <td><div className="admin-row-actions">{pendingDeleteId === product.id ? <><span className="admin-confirm-label">¿Eliminar?</span><button className="admin-icon-button admin-icon-button--danger" type="button" onClick={() => { void confirmDelete(product.id) }} aria-label={`Confirmar eliminación de ${product.name}`} title="Confirmar eliminación"><Check size={16} /></button><button className="admin-icon-button" type="button" onClick={() => setPendingDeleteId(null)} aria-label="Cancelar eliminación" title="Cancelar"><X size={16} /></button></> : <><button className="admin-icon-button" type="button" onClick={() => { setDraft(productToDraft(product)); setFormError('') }} aria-label={`Editar ${product.name}`} title="Editar"><Pencil size={16} /></button><button className="admin-icon-button admin-icon-button--danger" type="button" onClick={() => setPendingDeleteId(product.id)} aria-label={`Eliminar ${product.name}`} title="Eliminar"><Trash2 size={16} /></button></>}</div></td>
               </tr>
             ))}
