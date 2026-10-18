@@ -70,6 +70,7 @@ const garmentMeasurements: Record<string, { chest: number; length: number }> = {
 function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, selectedView, currentUser, currency, usdArsRate, onBack, onSelectRelated, onSizeChange, onViewChange, onAddToCart, onRequestLogin, onOpenContact }: ProductDetailProps) {
   const [isGalleryHovering, setIsGalleryHovering] = useState(false)
   const [reviewResult, setReviewResult] = useState<{ slug: string; reviews: ProductReview[] } | null>(null)
+  const [zoomOrigin, setZoomOrigin] = useState<string | null>(null)
   const [reviewRating, setReviewRating] = useState(5)
   const [reviewComment, setReviewComment] = useState('')
   const [reviewMessage, setReviewMessage] = useState('')
@@ -78,7 +79,7 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
   const baseViews = product.gallery && product.gallery.length > 0 ? [...product.gallery] : [{ src: getProductImage(product), alt: product.alt, label: 'Vista principal' }]
   const views = [...baseViews]
 
-  while (views.length < 5) {
+  while (views.length < 3) {
     const source = baseViews[views.length % baseViews.length]
     views.push({
       src: source.src,
@@ -150,8 +151,23 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
       <div className="product-detail__breadcrumb"><button type="button" onClick={onBack}>← Volver a la tienda</button><span aria-hidden="true">/</span><span>{product.name}</span></div>
       <div className="product-detail__layout">
         <div className="product-detail__gallery">
-          <div className="product-detail__main-image" onMouseEnter={() => setIsGalleryHovering(true)} onMouseLeave={() => setIsGalleryHovering(false)}>
-            <img key={currentView?.src ?? getProductImage(product)} src={currentView?.src ?? getProductImage(product)} alt={currentView?.alt ?? product.alt} />
+          <div
+            className={`product-detail__main-image${zoomOrigin ? ' is-zooming' : ''}`}
+            onMouseEnter={() => setIsGalleryHovering(true)}
+            onMouseLeave={() => { setIsGalleryHovering(false); setZoomOrigin(null) }}
+            onMouseMove={(event) => {
+              if (!zoomOrigin) return
+              const box = event.currentTarget.getBoundingClientRect()
+              setZoomOrigin(`${((event.clientX - box.left) / box.width) * 100}% ${((event.clientY - box.top) / box.height) * 100}%`)
+            }}
+            onClick={(event) => {
+              if (zoomOrigin) { setZoomOrigin(null); return }
+              const box = event.currentTarget.getBoundingClientRect()
+              setZoomOrigin(`${((event.clientX - box.left) / box.width) * 100}% ${((event.clientY - box.top) / box.height) * 100}%`)
+            }}
+            title="Clic para ampliar"
+          >
+            <img key={currentView?.src ?? getProductImage(product)} src={currentView?.src ?? getProductImage(product)} alt={currentView?.alt ?? product.alt} style={zoomOrigin ? { transformOrigin: zoomOrigin } : undefined} />
           </div>
           <div className="product-detail__views" role="group" aria-label={`Vistas de ${product.name}`}>
             {views.map((view, index) => <button className={selectedView === index ? 'is-active' : ''} key={`${view.label}-${index}`} type="button" onClick={() => onViewChange(index)} aria-label={`Ver ${view.label}`} aria-pressed={selectedView === index}><img src={view.src} alt="" /></button>)}

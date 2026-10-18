@@ -17,8 +17,7 @@ type ProductDraft = {
   isPromotion: boolean
   description: string
   designDescription: string
-  frontImage: string
-  backImage: string
+  images: string[]
 }
 
 type ProductAdminProps = {
@@ -27,6 +26,9 @@ type ProductAdminProps = {
   onDelete: (productId: number) => Promise<void>
   onClose: () => void
 }
+
+const minProductImages = 3
+const maxProductImages = 10
 
 const emptyDraft = (): ProductDraft => ({
   id: null,
@@ -41,8 +43,7 @@ const emptyDraft = (): ProductDraft => ({
   isPromotion: false,
   description: '',
   designDescription: '',
-  frontImage: '',
-  backImage: '',
+  images: [],
 })
 
 const productToDraft = (product: Product): ProductDraft => {
@@ -60,8 +61,7 @@ const productToDraft = (product: Product): ProductDraft => {
     isPromotion: Boolean(product.badge && product.badge !== 'Diseño UnFocus'),
     description: product.description,
     designDescription: product.designDescription,
-    frontImage: product.gallery?.[0]?.src ?? getProductImage(product, 0),
-    backImage: product.gallery?.[1]?.src ?? getProductImage(product, 1),
+    images: product.gallery?.length ? product.gallery.map((view) => view.src) : [getProductImage(product, 0), getProductImage(product, 1)],
   }
 }
 
@@ -95,7 +95,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState<ProductDraft | null>(null)
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null)
-  const [processingImage, setProcessingImage] = useState<'frontImage' | 'backImage' | null>(null)
+  const [processingImage, setProcessingImage] = useState(false)
   const [formError, setFormError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [summary, setSummary] = useState<AdminSummary | null>(null)
@@ -133,17 +133,22 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
   )
   const inventoryValue = products.reduce((total, product) => total + product.price, 0)
 
-  const handleImage = async (field: 'frontImage' | 'backImage', file?: File) => {
-    if (!file) return
+  const handleImages = async (files: File[], replaceIndex?: number) => {
+    if (!files.length) return
     setFormError('')
-    setProcessingImage(field)
+    setProcessingImage(true)
     try {
-      const image = await optimizeImage(file)
-      setDraft((current) => current ? { ...current, [field]: image } : current)
+      const optimized: string[] = []
+      for (const file of files) optimized.push(await optimizeImage(file))
+      setDraft((current) => {
+        if (!current) return current
+        if (replaceIndex !== undefined) return { ...current, images: current.images.map((image, index) => index === replaceIndex ? optimized[0] : image) }
+        return { ...current, images: [...current.images, ...optimized].slice(0, maxProductImages) }
+      })
     } catch {
       setFormError('No se pudo procesar esa imagen. Prueba con otro archivo. El formato recomendado es JPG o PNG.')
     } finally {
-      setProcessingImage(null)
+      setProcessingImage(false)
     }
   }
 
@@ -160,6 +165,10 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
         .map((size) => [size, Number(draft.stockBySize[size] ?? 0)] as const)
         .filter(([, value]) => Number.isInteger(value) && value >= 0),
     )
+    if (draft.images.length < minProductImages) {
+      setFormError(`Sube al menos ${minProductImages} im?genes (m?ximo ${maxProductImages}).`)
+      return
+    }
     const product: Product = {
       id: draft.id ?? Math.max(0, ...products.map((item) => item.id)) + 1,
       slug: existingProduct?.slug ?? (hasSlugConflict ? `${baseSlug}-${Date.now().toString(36)}` : baseSlug),
@@ -177,10 +186,11 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
       description: draft.description.trim(),
       designDescription: draft.designDescription.trim(),
       stockBySize,
-      gallery: [
-        { src: draft.frontImage, alt: `Frente de la camiseta ${name}`, label: 'Frente' },
-        { src: draft.backImage, alt: `Espalda de la camiseta ${name}`, label: 'Espalda' },
-      ],
+      gallery: draft.images.map((src, index) => ({
+        src,
+        alt: `${index === 0 ? 'Frente' : index === 1 ? 'Espalda' : 'Vista ' + (index + 1)} de la camiseta ${name}`,
+        label: index === 0 ? 'Frente' : index === 1 ? 'Espalda' : `Vista ${index + 1}`,
+      })),
       badge: draft.isPromotion ? 'PROMO' : '',
     }
     setIsSaving(true)
@@ -309,23 +319,31 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
             <label className="admin-field admin-field--wide"><span>Sobre el diseño</span><textarea required rows={3} maxLength={500} value={draft.designDescription} onChange={(event) => setDraft({ ...draft, designDescription: event.target.value })} placeholder="Cuenta qué representa el diseño." /></label>
           </div>
 
-          <div className="admin-upload-grid">
-            {([
-              { field: 'frontImage', label: 'Imagen frontal', viewIndex: 0 },
-              { field: 'backImage', label: 'Imagen trasera', viewIndex: 1 },
-            ] as const).map(({ field, label, viewIndex }) => (
-              <label className="admin-upload" key={field}>
-                <span className="admin-upload__label">{label}</span>
-                <span className="admin-upload__preview">{draft[field] ? <img src={draft[field]} alt={`Vista previa ${label.toLocaleLowerCase('es')}`} /> : <ImagePlus size={26} strokeWidth={1.5} aria-hidden="true" />}</span>
-                <span className="admin-upload__action"><ImagePlus size={15} aria-hidden="true" /> {processingImage === field ? 'Procesando…' : draft[field] ? 'Cambiar imagen' : 'Subir imagen'}</span>
-                <input type="file" accept="image/*" required={!draft[field]} disabled={processingImage !== null} onChange={(event) => { void handleImage(field, event.currentTarget.files?.[0]); event.currentTarget.value = '' }} />
-                <span className="admin-upload__hint">Vista: {viewIndex === 0 ? 'Frente' : 'Espalda'}. La imagen se optimiza al subirla.</span>
-              </label>
-            ))}
+          <div className="admin-field admin-field--wide">
+            <span>Im?genes del producto ({draft.images.length}/{maxProductImages}, m?nimo {minProductImages}). La primera es el frente y la segunda la espalda.</span>
+            <div className="admin-upload-grid">
+              {draft.images.map((image, index) => (
+                <div className="admin-upload" key={`${index}-${image.slice(-24)}`}>
+                  <span className="admin-upload__label">{index === 0 ? 'Frente' : index === 1 ? 'Espalda' : `Imagen ${index + 1}`}</span>
+                  <span className="admin-upload__preview"><img src={image} alt={`Vista previa ${index + 1}`} /></span>
+                  <label className="admin-upload__action"><ImagePlus size={15} aria-hidden="true" /> Cambiar<input type="file" accept="image/*" hidden disabled={processingImage} onChange={(event) => { void handleImages(Array.from(event.currentTarget.files ?? []), index); event.currentTarget.value = '' }} /></label>
+                  <button className="admin-cancel-button" type="button" onClick={() => setDraft({ ...draft, images: draft.images.filter((_, imageIndex) => imageIndex !== index) })}><Trash2 size={14} aria-hidden="true" /> Quitar</button>
+                </div>
+              ))}
+              {draft.images.length < maxProductImages && (
+                <label className="admin-upload">
+                  <span className="admin-upload__label">A?adir im?genes</span>
+                  <span className="admin-upload__preview"><ImagePlus size={26} strokeWidth={1.5} aria-hidden="true" /></span>
+                  <span className="admin-upload__action"><ImagePlus size={15} aria-hidden="true" /> {processingImage ? 'Procesando?' : 'Subir im?genes'}</span>
+                  <input type="file" accept="image/*" multiple disabled={processingImage} onChange={(event) => { void handleImages(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = '' }} />
+                  <span className="admin-upload__hint">Se optimizan al subirlas.</span>
+                </label>
+              )}
+            </div>
           </div>
 
           {formError && <p className="admin-form-error" role="alert">{formError}</p>}
-          <div className="admin-editor__footer"><button className="admin-cancel-button" type="button" onClick={() => { setDraft(null); setFormError('') }}>Cancelar</button><button className="button button--coral" type="submit" disabled={processingImage !== null || isSaving}><Check size={16} aria-hidden="true" /> {isSaving ? 'Guardando…' : 'Guardar producto'}</button></div>
+          <div className="admin-editor__footer"><button className="admin-cancel-button" type="button" onClick={() => { setDraft(null); setFormError('') }}>Cancelar</button><button className="button button--coral" type="submit" disabled={processingImage || isSaving}><Check size={16} aria-hidden="true" /> {isSaving ? 'Guardando…' : 'Guardar producto'}</button></div>
         </form>
       ) : (
         <section className="admin-inventory" aria-labelledby="inventory-title">

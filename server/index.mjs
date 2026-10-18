@@ -174,6 +174,7 @@ const runSchemaMigration = () => {
     CREATE INDEX IF NOT EXISTS payment_attempts_order_id_idx ON payment_attempts(order_id);
   `)
   if (!columns.has('stock')) database.exec('ALTER TABLE products ADD COLUMN stock INTEGER NOT NULL DEFAULT 0')
+  if (!columns.has('extra_images')) database.exec("ALTER TABLE products ADD COLUMN extra_images TEXT NOT NULL DEFAULT '[]'")
   if (!columns.has('stock_by_size')) database.exec("ALTER TABLE products ADD COLUMN stock_by_size TEXT NOT NULL DEFAULT '{}' ")
   database.exec(`
     CREATE TABLE IF NOT EXISTS product_reviews (
@@ -375,6 +376,15 @@ const createSession = (response, userId) => {
   })
 }
 
+const parseExtraImages = (value) => {
+  try {
+    const parsed = JSON.parse(value || '[]')
+    return Array.isArray(parsed) ? parsed.filter((image) => typeof image?.src === 'string') : []
+  } catch {
+    return []
+  }
+}
+
 const productFromRow = (row) => ({
   id: row.id,
   slug: row.slug,
@@ -393,6 +403,7 @@ const productFromRow = (row) => ({
   gallery: [
     { src: row.front_image, alt: row.front_alt, label: 'Frente' },
     { src: row.back_image, alt: row.back_alt, label: 'Espalda' },
+    ...parseExtraImages(row.extra_images).map((image, index) => ({ src: image.src, alt: image.alt, label: `Vista ${index + 3}` })),
   ],
   badge: row.badge,
   createdAt: row.created_at,
@@ -405,17 +416,19 @@ const selectProductById = database.prepare(`${productSelect} WHERE p.id = ?`)
 const selectProductBySlug = database.prepare(`${productSelect} WHERE p.slug = ?`)
 const allProducts = database.prepare(`${productSelect} ORDER BY p.id`)
 
+const seedExtraImages = (product) => product.gallery.slice(2).map((image) => ({ src: image.src, alt: image.alt }))
+
 const insertSeedProducts = async () => {
   if (database.prepare('SELECT COUNT(*) AS count FROM products').get().count > 0) return
   const seed = JSON.parse(await readFile(path.join(serverDirectory, 'seed-products.json'), 'utf8'))
   const insert = database.prepare(`
-    INSERT INTO products (id, slug, name, category, price_ars, stock, stock_by_size, composition, features_json, description, design_description, front_image, front_alt, back_image, back_alt, badge)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO products (id, slug, name, category, price_ars, stock, stock_by_size, composition, features_json, description, design_description, front_image, front_alt, back_image, back_alt, badge, extra_images)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   for (const product of seed) {
     const stockBySize = product.stockBySize && typeof product.stockBySize === 'object' ? product.stockBySize : Object.fromEntries(sizes.map((size) => [size, 0]))
     const totalStock = Object.values(stockBySize).reduce((sum, value) => sum + Number(value || 0), 0)
-    insert.run(product.id, product.slug, product.name, product.category, product.price, totalStock, JSON.stringify(stockBySize), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.gallery[0].src, product.gallery[0].alt, product.gallery[1].src, product.gallery[1].alt, product.badge ?? '')
+    insert.run(product.id, product.slug, product.name, product.category, product.price, totalStock, JSON.stringify(stockBySize), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.gallery[0].src, product.gallery[0].alt, product.gallery[1].src, product.gallery[1].alt, product.badge ?? '', JSON.stringify(seedExtraImages(product)))
   }
 }
 
@@ -436,6 +449,14 @@ const bootstrapAdministrator = async () => {
 }
 
 await insertSeedProducts()
+
+// Backfill: productos sembrados antes de existir la galería ampliada reciben su tercera imagen.
+const backfillSeedImages = async () => {
+  const seed = JSON.parse(await readFile(path.join(serverDirectory, 'seed-products.json'), 'utf8'))
+  const update = database.prepare("UPDATE products SET extra_images = ? WHERE slug = ? AND extra_images = '[]'")
+  for (const product of seed.products ?? seed) update.run(JSON.stringify(seedExtraImages(product)), product.slug)
+}
+await backfillSeedImages()
 await bootstrapAdministrator()
 
 const app = express()
@@ -681,6 +702,9 @@ const persistImage = async (value) => {
   return `/uploads/${filename}`
 }
 
+const minimumProductImages = 3
+const maximumProductImages = 10
+
 const validateProduct = (body) => {
   const name = typeof body.name === 'string' ? body.name.trim() : ''
   const slug = typeof body.slug === 'string' ? body.slug.trim().toLowerCase() : ''
@@ -704,7 +728,7 @@ const validateProduct = (body) => {
   if (!composition || composition.length > 100) throw new Error('La composición es obligatoria.')
   if (!description || description.length > 500) throw new Error('La descripción debe tener hasta 500 caracteres.')
   if (!designDescription || designDescription.length > 500) throw new Error('La descripción del diseño debe tener hasta 500 caracteres.')
-  if (!Array.isArray(gallery) || gallery.length < 2) throw new Error('Sube las imágenes de frente y espalda.')
+  if (!Array.isArray(gallery) || gallery.length < minimumProductImages || gallery.length > maximumProductImages) throw new Error(`Sube entre ${minimumProductImages} y ${maximumProductImages} imágenes del producto.`)
   return { name, slug, price, stock, stockBySize, composition, description, designDescription, category, gallery }
 }
 
@@ -712,30 +736,35 @@ const requireProductBody = async (body) => {
   const product = validateProduct(body)
   const frontImage = await persistImage(product.gallery[0].src)
   const backImage = await persistImage(product.gallery[1].src)
+  const extraImages = []
+  for (const [index, image] of product.gallery.slice(2).entries()) {
+    extraImages.push({ src: await persistImage(image?.src), alt: String(image?.alt || `Vista ${index + 3} de ${product.name}`).slice(0, 200) })
+  }
   return {
     ...product,
     frontImage,
     frontAlt: String(product.gallery[0].alt || `Frente de ${product.name}`).slice(0, 200),
     backImage,
     backAlt: String(product.gallery[1].alt || `Espalda de ${product.name}`).slice(0, 200),
+    extraImages,
     badge: typeof body.badge === 'string' ? body.badge.slice(0, 80) : '',
     features: Array.isArray(body.features) ? body.features.filter((feature) => typeof feature === 'string').slice(0, 12) : [product.composition],
   }
 }
 
 const insertProduct = database.prepare(`
-  INSERT INTO products (slug, name, category, price_ars, stock, stock_by_size, composition, features_json, description, design_description, front_image, front_alt, back_image, back_alt, badge)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO products (slug, name, category, price_ars, stock, stock_by_size, composition, features_json, description, design_description, front_image, front_alt, back_image, back_alt, badge, extra_images)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `)
 const updateProduct = database.prepare(`
-  UPDATE products SET slug = ?, name = ?, category = ?, price_ars = ?, stock = ?, stock_by_size = ?, composition = ?, features_json = ?, description = ?, design_description = ?, front_image = ?, front_alt = ?, back_image = ?, back_alt = ?, badge = ?, updated_at = CURRENT_TIMESTAMP
+  UPDATE products SET slug = ?, name = ?, category = ?, price_ars = ?, stock = ?, stock_by_size = ?, composition = ?, features_json = ?, description = ?, design_description = ?, front_image = ?, front_alt = ?, back_image = ?, back_alt = ?, badge = ?, extra_images = ?, updated_at = CURRENT_TIMESTAMP
   WHERE id = ?
 `)
 
 app.post('/api/admin/products', requireAdmin, async (request, response) => {
   try {
     const product = await requireProductBody(request.body)
-    const result = insertProduct.run(product.slug, product.name, product.category, product.price, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge)
+    const result = insertProduct.run(product.slug, product.name, product.category, product.price, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages))
     response.status(201).json({ product: productFromRow(selectProductById.get(Number(result.lastInsertRowid))) })
   } catch (error) {
     response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un producto con ese enlace.' : error.message })
@@ -747,7 +776,7 @@ app.put('/api/admin/products/:id', requireAdmin, async (request, response) => {
   if (!Number.isSafeInteger(id) || !selectProductById.get(id)) return response.status(404).json({ error: 'Producto no encontrado.' })
   try {
     const product = await requireProductBody(request.body)
-    updateProduct.run(product.slug, product.name, product.category, product.price, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, id)
+    updateProduct.run(product.slug, product.name, product.category, product.price, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), id)
     response.json({ product: productFromRow(selectProductById.get(id)) })
   } catch (error) {
     response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un producto con ese enlace.' : error.message })

@@ -35,3 +35,7 @@ button, a, select { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--coral); outline-offset: 3px; }
 img { display: block; max-width: 100%; }
 #root { min-height: 100vh; }
+
+.product-detail__main-image { overflow: hidden; cursor: zoom-in; }
+.product-detail__main-image.is-zooming { cursor: zoom-out; }
+.product-detail__main-image.is-zooming img { transform: scale(2.2); transition: transform-origin 0s; animation: none; }
