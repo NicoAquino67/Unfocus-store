@@ -32,6 +32,7 @@ import './App.css'
 type ProductDetailProps = {
   product: Product
   relatedProducts: Product[]
+  relatedTitle: string
   selectedSize: string
   selectedView: number
   currentUser: AccountUser | null
@@ -66,7 +67,7 @@ const garmentMeasurements: Record<string, { chest: number; length: number }> = {
   '3XL': { chest: 66, length: 79 },
 }
 
-function ProductDetail({ product, relatedProducts, selectedSize, selectedView, currentUser, currency, usdArsRate, onBack, onSelectRelated, onSizeChange, onViewChange, onAddToCart, onRequestLogin, onOpenContact }: ProductDetailProps) {
+function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, selectedView, currentUser, currency, usdArsRate, onBack, onSelectRelated, onSizeChange, onViewChange, onAddToCart, onRequestLogin, onOpenContact }: ProductDetailProps) {
   const [isGalleryHovering, setIsGalleryHovering] = useState(false)
   const [reviewResult, setReviewResult] = useState<{ slug: string; reviews: ProductReview[] } | null>(null)
   const [reviewRating, setReviewRating] = useState(5)
@@ -218,7 +219,7 @@ function ProductDetail({ product, relatedProducts, selectedSize, selectedView, c
       </section>
       {relatedProducts.length > 0 && (
         <section className="related-products" aria-labelledby="related-products-title">
-          <div className="related-products__heading"><p className="eyebrow">Más de UnFocus</p><h2 id="related-products-title">También puede interesarte</h2></div>
+          <div className="related-products__heading"><p className="eyebrow">Más de UnFocus</p><h2 id="related-products-title">{relatedTitle}</h2></div>
           <div className="related-products__grid">
             {relatedProducts.map((relatedProduct) => (
               <article className="related-product" key={relatedProduct.id}>
@@ -369,6 +370,18 @@ const readLegalPage = (): LegalPageKey | null => {
   return legalPageKeys.find((key) => key === value) ?? null
 }
 
+const recentlyViewedKey = 'unfocus-recently-viewed'
+const readRecentlyViewed = (): string[] => {
+  try {
+    const stored: unknown = JSON.parse(window.localStorage.getItem(recentlyViewedKey) ?? '[]')
+    const history = Array.isArray(stored) ? stored.filter((slug): slug is string => typeof slug === 'string') : []
+    const current = new URLSearchParams(window.location.search).get('producto')
+    return current ? [current, ...history.filter((slug) => slug !== current)].slice(0, 12) : history
+  } catch {
+    return []
+  }
+}
+
 function App() {
   const [products, setProducts] = useState<Product[]>(() => initialProducts.map(normalizeProductFacets))
   const [currentUser, setCurrentUser] = useState<AccountUser | null>(null)
@@ -378,6 +391,17 @@ function App() {
   const [isContactPage, setIsContactPage] = useState(() => new URLSearchParams(window.location.search).get('contacto') === '1')
   const [legalPage, setLegalPage] = useState<LegalPageKey | null>(readLegalPage)
   const [storeConfig, setStoreConfig] = useState<StoreConfig | null>(null)
+  const [recentSlugs, setRecentSlugs] = useState<string[]>(readRecentlyViewed)
+  const [recommendationSeed] = useState(() => Math.random() * 1000 + 1)
+
+  const rememberProduct = (slug: string | null) => {
+    if (!slug) return
+    setRecentSlugs((current) => {
+      const next = [slug, ...current.filter((item) => item !== slug)].slice(0, 12)
+      window.localStorage.setItem(recentlyViewedKey, JSON.stringify(next))
+      return next
+    })
+  }
   const [checkoutStep, setCheckoutStep] = useState<'bag' | 'delivery'>('bag')
   const [isCheckingOut, setIsCheckingOut] = useState(false)
   const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>('ARS')
@@ -501,6 +525,7 @@ function App() {
     const syncProductRoute = () => {
       const searchParams = new URLSearchParams(window.location.search)
       setSelectedProductSlug(searchParams.get('producto'))
+      rememberProduct(searchParams.get('producto'))
       setIsAdminPage(searchParams.get('admin') === '1')
       setIsAccountPage(searchParams.get('cuenta') === '1')
       setIsContactPage(searchParams.get('contacto') === '1')
@@ -542,6 +567,14 @@ function App() {
   const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0)
   const cartTotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0)
   const activeProduct = products.find((product) => product.slug === selectedProductSlug)
+  const activeSlug = activeProduct?.slug
+
+  // Vistos recientemente (sin el producto actual); si no hay historial, productos al azar (también sin el actual).
+  const recentProducts = recentSlugs.flatMap((slug) => products.filter((item) => item.slug === slug && item.slug !== activeSlug)).slice(0, 4)
+  const hasRecentlyViewed = recentProducts.length > 0
+  const relatedProducts = hasRecentlyViewed
+    ? recentProducts
+    : products.filter((item) => item.id !== activeProduct?.id).sort((first, second) => ((first.id * recommendationSeed * 9301) % 1) - ((second.id * recommendationSeed * 9301) % 1)).slice(0, 4)
 
   const addToCart = (product: Product) => {
     const size = selectedSizes[product.id] ?? 'M'
@@ -577,6 +610,7 @@ function App() {
     setIsAccountPage(false)
     setIsContactPage(false)
     setSelectedProductSlug(product?.slug ?? null)
+    rememberProduct(product?.slug ?? null)
     setLegalPage(null)
     window.scrollTo({ top: 0, behavior: 'auto' })
   }
@@ -838,7 +872,8 @@ function App() {
         ) : legalPage ? <LegalPages page={legalPage} store={storeConfig?.store ?? null} onBack={navigateToStore} onOpenPage={navigateToLegal} onOpenContact={navigateToContact} /> : isContactPage ? <ContactPage onBack={navigateToStore} /> : activeProduct ? (
           <ProductDetail
             product={activeProduct}
-            relatedProducts={products.filter((product) => product.id !== activeProduct.id)}
+            relatedProducts={relatedProducts}
+            relatedTitle={hasRecentlyViewed ? 'Vistos recientemente' : 'También puede interesarte'}
             selectedSize={selectedSizes[activeProduct.id] ?? 'M'}
             selectedView={selectedProductViews[activeProduct.id] ?? 0}
             currentUser={currentUser}
