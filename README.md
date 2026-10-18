@@ -51,7 +51,7 @@ Se envían por SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SM
 - **Emails**: bienvenida, pedido creado, pago confirmado, envío; baja de newsletter con enlace.
 - **Defensa del consumidor** y botón de baja en el pie y en las páginas legales.
 - **Catálogo**: orden por precio, novedad y popularidad; "vistos recientemente" (con recomendaciones aleatorias para usuarios nuevos, sin repetir el producto abierto); galería de 3 a 10 imágenes con zoom (admin con carga múltiple).
-- **Preguntas frecuentes**: página `?faq=1` con las dudas más comunes.
+- **Preguntas frecuentes**: página `?legal=faq` con las dudas más comunes.
 - **Compra como invitado**: sin cuenta, con nombre, email y teléfono; si el email ya tiene cuenta se pide iniciar sesión. Al registrarse con ese email se heredan los pedidos.
 - **Cupones**: porcentaje o monto fijo, mínimo de compra, usos máximos y vencimiento; se administran en el panel admin. No aplican a tarjetas de regalo.
 - **Tarjeta de regalo**: producto digital de 30.000 a 1.000.000 ARS (montos predefinidos o libre). Al confirmarse el pago se envía por email un código `GC-XXXX-XXXX-XXXX`, canjeable (parcial o total) en el checkout. El admin ve las tarjetas emitidas y su saldo.
