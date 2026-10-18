@@ -319,7 +319,10 @@ const sendOrderEmail = async (orderId, kind) => {
   const signature = '\nEquipo UnFocus\nSeeking clarity. Embrace yourself.'
   let subject
   let body
-  if (kind === 'paid') {
+  if (kind === 'created') {
+    subject = `Registramos tu pedido ${order.reference}`
+    body = `${greeting}\n\nRegistramos tu pedido ${order.reference}. Está pendiente de pago${order.status === 'pending_payment' ? ` y se cancelará automáticamente si no se completa en ${pendingOrderExpiryDays} días` : ''}.\n\n${itemLines}\n${totals}\n\n${shippingSummary(order)}\n\nPuedes retomar el pago desde tu cuenta.`
+  } else if (kind === 'paid') {
     subject = `Recibimos tu pago · Pedido ${order.reference}`
     body = `${greeting}\n\nConfirmamos el pago de tu pedido ${order.reference}.\n\n${itemLines}\n${totals}\n\n${shippingSummary(order)}\n\nTe avisaremos por correo cuando lo despachemos.`
   } else if (kind === 'shipped') {
@@ -616,6 +619,12 @@ app.post('/api/auth/register', limitAuthAttempts, async (request, response) => {
     const passwordHash = await hashPassword(password)
     const result = database.prepare('INSERT INTO users (name, email, phone, password_hash) VALUES (?, ?, ?, ?)').run(name, email, phone, passwordHash)
     const user = database.prepare('SELECT id, name, email, phone, role FROM users WHERE id = ?').get(Number(result.lastInsertRowid))
+    void sendMail({
+      to: email,
+      subject: '¡Bienvenido/a a UnFocus!',
+      text: `Hola ${name.split(' ')[0]},\n\nTu cuenta en UnFocus ya está lista. Desde ella puedes seguir tus pedidos, guardar favoritos y retomar pagos pendientes.\n\nEquipo UnFocus\nSeeking clarity. Embrace yourself.`,
+      replyTo: storeSettings.email || undefined,
+    })
     return createUserSession(request, response, user)
   } catch {
     return response.status(500).json({ error: 'No se pudo crear la cuenta.' })
@@ -897,6 +906,7 @@ setInterval(cancelExpiredPendingOrders, 60 * 60 * 1000).unref()
 app.post('/api/orders', requireAuth, (request, response) => {
   try {
     const result = createOrderRecord(request, request.body.items, request.body.shipping)
+    void sendOrderEmail(result.order.id, 'created')
     response.status(201).json(result)
   } catch (error) {
     response.status(400).json({ error: error.message || 'No se pudo registrar el pedido.' })
@@ -1157,6 +1167,7 @@ app.post('/api/payments/create-preference', requireAuth, async (request, respons
     if (!paymentUrl) throw new Error('Mercado Pago no devolvió el enlace de pago esperado para estas credenciales.')
     database.prepare('UPDATE orders SET payment_url = ? WHERE id = ?').run(paymentUrl, order.order.id)
     createNotification(request.user.id, 'order_created', 'Pedido registrado', `Tu pedido ${order.order.reference} quedó registrado y está pendiente de pago.`)
+    void sendOrderEmail(order.order.id, 'created')
     response.json({
       order: order.order,
       paymentUrl,
