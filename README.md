@@ -107,4 +107,7 @@ Comprobaciones locales: `npm run build` y `npm run lint`.
 
 ## Lista de pendientes
 
+
+Estado actual: MVP funcional y base de datos reiniciada (solo cuenta admin y catálogo con 10 unidades por prenda). Antes de vender hay que definir `MP_WEBHOOK_SECRET`, cargar datos bancarios y legales en el admin, probar pagos reales y desplegar las imágenes de `ident/`. Detalle en [`todo`](./todo).
+
 Ver el archivo [`todo`](./todo): checklist del MVP y comparativa con tiendas como nike.com.

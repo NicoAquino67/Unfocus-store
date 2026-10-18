@@ -108,8 +108,16 @@ Operación y calidad
 [ ] Importación/exportación de catálogo (CSV)
 [ ] Multi-idioma y multi-moneda de cobro
 [ ] Tests automatizados (hoy solo lint y build)
-[ ] Accesibilidad (auditoría WCAG) y rendimiento (Lighthouse)
+[~] Accesibilidad: axe-core WCAG 2.2 AA sin violaciones en tienda, ficha, bolsa, checkout, cuenta, legales y admin; falta prueba manual con lector de pantalla/zoom 200 % y Lighthouse de rendimiento
 [ ] Migrar de SQLite a PostgreSQL si crece el volumen
 [ ] Páginas de ayuda / FAQ y chat de soporte
 
 - [x] Cancelación automática de pedidos pendientes de pago tras 3 días (PENDING_ORDER_EXPIRY_DAYS)
+[x] Descuentos por producto (porcentual o en ARS) sin alterar el precio original
+[x] Galería de imágenes del admin en un único panel
+
+## Pendiente antes de lanzar (acciones tuyas)
+[ ] Definir MP_WEBHOOK_SECRET (clave secreta de Webhooks de Mercado Pago)
+[ ] Cargar datos bancarios de transferencia y datos legales en el panel admin
+[ ] Probar en la web con pagos reales/sandbox: cupones, invitado, tarjeta de regalo, transferencia
+[ ] Subir a producción las imágenes semilla de ident/ (carpeta fuera de git)
