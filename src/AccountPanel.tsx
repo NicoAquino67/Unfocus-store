@@ -188,6 +188,20 @@ function AccountPanel({ user, authLoading, currency, usdArsRate, onAuthenticated
                 <div className="account-order__items">{order.items.map((item, index) => <span key={`${order.id}-${index}`}>{item.quantity} × {item.name} · {item.size}</span>)}</div>
                 <button className="account-order__toggle" type="button" onClick={() => setSelectedOrderId(isOpen ? null : order.id)}>{isOpen ? 'Ocultar detalle' : 'Ver detalle'}</button>
               </div>
+              {order.status === 'pending_payment' && order.paymentMethod === 'transfer' && order.transfer && (
+                <div className="account-order__transfer">
+                  <strong>Paga por transferencia</strong>
+                  <p>Transfiere {formatPrice(order.totalArs, currency, usdArsRate)} a:</p>
+                  <ul>
+                    <li>Titular: {order.transfer.holder}</li>
+                    {order.transfer.bank && <li>Banco: {order.transfer.bank}</li>}
+                    {order.transfer.cbu && <li>CBU/CVU: {order.transfer.cbu}</li>}
+                    {order.transfer.alias && <li>Alias: {order.transfer.alias}</li>}
+                    {order.transfer.taxId && <li>CUIT/CUIL: {order.transfer.taxId}</li>}
+                  </ul>
+                  <p>Pon <b>{order.reference}</b> como concepto y envíanos el comprobante por correo. Confirmamos el pago manualmente.</p>
+                </div>
+              )}
               {order.status === 'pending_payment' && order.paymentUrl && (
                 <a className="account-order__pay" href={order.paymentUrl}>Continuar pago con Mercado Pago <ArrowRight size={15} aria-hidden="true" /></a>
               )}

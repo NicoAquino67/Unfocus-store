@@ -87,3 +87,6 @@
 .account-order__shipping p { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
 .account-order__shipping span { color: var(--muted); }
 .account-order__status--shipped, .account-order__status--delivered { background: #e6f4ea; color: #1e6b3a; }
+
+.account-order__transfer { margin-top: 10px; padding: 12px; border: 1px solid var(--line); font-size: 13px; line-height: 1.5; }
+.account-order__transfer ul { margin: 6px 0; padding-left: 18px; }

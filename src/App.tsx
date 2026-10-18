@@ -24,7 +24,7 @@ import { categories, formatPrice, getProductImage, getProductFacets, getStockFor
 import { apiRequest, type AccountNotification, type AccountSummary, type AccountUser, type ProductReview, type ShippingDetails, type StoreConfig } from './api'
 import AccountPanel from './AccountPanel'
 import ProductAdmin from './ProductAdmin'
-import CheckoutForm from './CheckoutForm'
+import CheckoutForm, { type PaymentMethod } from './CheckoutForm'
 import LegalPages from './LegalPages'
 import { legalPageKeys, legalPageTitles, type LegalPageKey } from './legalData'
 import './App.css'
@@ -736,9 +736,21 @@ function App() {
     setCheckoutStep('delivery')
   }
 
-  const handleCheckout = async (shipping: ShippingDetails, acceptTerms: boolean) => {
+  const handleCheckout = async (shipping: ShippingDetails, acceptTerms: boolean, paymentMethod: PaymentMethod) => {
     setIsCheckingOut(true)
     try {
+      if (paymentMethod === 'transfer') {
+        const transferResult = await apiRequest<{ order: { reference: string } }>('/api/orders', {
+          method: 'POST',
+          body: JSON.stringify({ items: cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity })), shipping, acceptTerms, paymentMethod }),
+        })
+        setCart({})
+        setIsCartOpen(false)
+        setCheckoutStep('bag')
+        navigateToAccount()
+        showNotice(`Pedido ${transferResult.order.reference} registrado. Transfiere el importe con los datos de tu cuenta.`)
+        return
+      }
       const result = await apiRequest<{ order: { reference: string }; paymentUrl: string }>('/api/payments/create-preference', {
         method: 'POST',
         body: JSON.stringify({ items: cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity })), shipping, acceptTerms }),
@@ -945,7 +957,7 @@ function App() {
           <aside className="cart-drawer" role="dialog" aria-modal="true" aria-labelledby="cart-title">
             <div className="cart-header"><div><p className="eyebrow">Tu selección</p><h2 id="cart-title">La bolsa <span>({cartCount})</span></h2></div><button className="icon-button" type="button" onClick={() => { setIsCartOpen(false); setCheckoutStep('bag') }} aria-label="Cerrar bolsa"><X size={21} /></button></div>
             {cartItems.length > 0 && checkoutStep === 'delivery' && currentUser ? (
-              <CheckoutForm user={currentUser} subtotal={cartTotal} shipping={storeConfig?.shipping ?? null} currency={displayCurrency} usdArsRate={usdArsRate} isSubmitting={isCheckingOut} onBack={() => setCheckoutStep('bag')} onOpenTerms={() => navigateToLegal('terminos')} onSubmit={(shipping, acceptTerms) => { void handleCheckout(shipping, acceptTerms) }} />
+              <CheckoutForm user={currentUser} subtotal={cartTotal} shipping={storeConfig?.shipping ?? null} transfer={storeConfig?.transfer ?? null} currency={displayCurrency} usdArsRate={usdArsRate} isSubmitting={isCheckingOut} onBack={() => setCheckoutStep('bag')} onOpenTerms={() => navigateToLegal('terminos')} onSubmit={(shipping, acceptTerms, paymentMethod) => { void handleCheckout(shipping, acceptTerms, paymentMethod) }} />
             ) : cartItems.length === 0 ? (
               <div className="cart-empty"><div className="cart-empty__icon"><ShoppingBag size={26} strokeWidth={1.5} /></div><h3>Tu bolsa está vacía.</h3><p>Elige solo lo que se sienta bien para ti.</p><button className="button button--dark" type="button" onClick={() => setIsCartOpen(false)}>Seguir mirando <ArrowRight size={16} /></button></div>
             ) : (

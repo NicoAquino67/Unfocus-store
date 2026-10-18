@@ -157,6 +157,7 @@ const runSchemaMigration = () => {
     tracking_code: 'TEXT',
     tracking_url: 'TEXT',
     shipped_at: 'TEXT',
+    payment_method: "TEXT NOT NULL DEFAULT 'mercadopago'",
   }
   for (const [column, definition] of Object.entries(orderColumnDefinitions)) {
     if (!orderColumns.has(column)) database.exec(`ALTER TABLE orders ADD COLUMN ${column} ${definition}`)
@@ -223,7 +224,7 @@ const nonNegativeIntegerFromEnv = (name) => {
   return Number.isFinite(value) && value > 0 ? Math.round(value) : 0
 }
 const textFromEnv = (name) => process.env[name]?.trim() || ''
-const settingKeys = ['shippingCostArs', 'freeShippingThresholdArs', 'pickupAddress', 'legalName', 'taxId', 'address', 'email', 'phone']
+const settingKeys = ['shippingCostArs', 'freeShippingThresholdArs', 'pickupAddress', 'legalName', 'taxId', 'address', 'email', 'phone', 'transferHolder', 'transferBank', 'transferCbu', 'transferAlias', 'transferTaxId']
 const integerSettingKeys = new Set(['shippingCostArs', 'freeShippingThresholdArs'])
 const envSettingDefaults = {
   shippingCostArs: nonNegativeIntegerFromEnv('SHIPPING_COST_ARS'),
@@ -234,6 +235,11 @@ const envSettingDefaults = {
   address: textFromEnv('STORE_ADDRESS'),
   email: textFromEnv('STORE_EMAIL') || textFromEnv('CONTACT_TO_EMAIL'),
   phone: textFromEnv('STORE_PHONE'),
+  transferHolder: '',
+  transferBank: '',
+  transferCbu: '',
+  transferAlias: '',
+  transferTaxId: '',
 }
 database.exec('CREATE TABLE IF NOT EXISTS store_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
 const storeSettings = { ...envSettingDefaults }
@@ -321,7 +327,11 @@ const sendOrderEmail = async (orderId, kind) => {
   let body
   if (kind === 'created') {
     subject = `Registramos tu pedido ${order.reference}`
-    body = `${greeting}\n\nRegistramos tu pedido ${order.reference}. Está pendiente de pago${order.status === 'pending_payment' ? ` y se cancelará automáticamente si no se completa en ${pendingOrderExpiryDays} días` : ''}.\n\n${itemLines}\n${totals}\n\n${shippingSummary(order)}\n\nPuedes retomar el pago desde tu cuenta.`
+    const transfer = order.payment_method === 'transfer' ? transferDetails() : null
+    const transferLines = transfer
+      ? `Paga por transferencia por ${formatArs(order.total_ars)}:\nTitular: ${transfer.holder}\n${transfer.bank ? `Banco: ${transfer.bank}\n` : ''}${transfer.cbu ? `CBU/CVU: ${transfer.cbu}\n` : ''}${transfer.alias ? `Alias: ${transfer.alias}\n` : ''}${transfer.taxId ? `CUIT/CUIL: ${transfer.taxId}\n` : ''}Indica ${order.reference} como concepto y envíanos el comprobante respondiendo este correo.`
+      : 'Puedes retomar el pago desde tu cuenta.'
+    body = `${greeting}\n\nRegistramos tu pedido ${order.reference}. Está pendiente de pago${order.status === 'pending_payment' ? ` y se cancelará automáticamente si no se completa en ${pendingOrderExpiryDays} días` : ''}.\n\n${itemLines}\n${totals}\n\n${shippingSummary(order)}\n\n${transferLines}`
   } else if (kind === 'paid') {
     subject = `Recibimos tu pago · Pedido ${order.reference}`
     body = `${greeting}\n\nConfirmamos el pago de tu pedido ${order.reference}.\n\n${itemLines}\n${totals}\n\n${shippingSummary(order)}\n\nTe avisaremos por correo cuando lo despachemos.`
@@ -529,8 +539,14 @@ app.use('/api/orders', (request, response, next) => applyRateLimit(request, resp
 app.use('/api/newsletter', (request, response, next) => applyRateLimit(request, response, next, 20, 60_000))
 app.use('/api/contact', (request, response, next) => applyRateLimit(request, response, next, 5, 60_000))
 
+const transferDetails = () => {
+  const { transferHolder: holder, transferBank: bank, transferCbu: cbu, transferAlias: alias, transferTaxId: taxId } = storeSettings
+  return holder && (cbu || alias) ? { holder, bank, cbu, alias, taxId } : null
+}
+
 const publicStoreConfig = () => ({
   shipping: { costArs: storeSettings.shippingCostArs, freeThresholdArs: storeSettings.freeShippingThresholdArs, pickupAddress: storeSettings.pickupAddress },
+  transfer: transferDetails(),
   store: { legalName: storeSettings.legalName, taxId: storeSettings.taxId, address: storeSettings.address, email: storeSettings.email, phone: storeSettings.phone },
 })
 
@@ -750,6 +766,8 @@ const serializeOrder = (order, extra = {}) => ({
   status: order.status,
   createdAt: order.created_at,
   paymentUrl: order.status === 'pending_payment' ? order.payment_url : null,
+  paymentMethod: order.payment_method ?? 'mercadopago',
+  transfer: order.payment_method === 'transfer' && order.status === 'pending_payment' ? transferDetails() : null,
   shipping: {
     method: order.shipping_method ?? 'delivery',
     name: order.shipping_name ?? '',
@@ -816,13 +834,13 @@ const buildOrderFromItems = (items, userId) => {
   return { orderItems, total, reference, userId }
 }
 
-const createOrderRecord = (request, items, shipping, { notify = true } = {}) => {
+const createOrderRecord = (request, items, shipping, { notify = true, paymentMethod = 'mercadopago' } = {}) => {
   const { orderItems, total: subtotal, reference, userId } = buildOrderFromItems(items, request.user.id)
   const shippingDetails = parseShippingDetails(shipping, subtotal)
   const total = subtotal + shippingDetails.costArs
   try {
     database.exec('BEGIN IMMEDIATE')
-    const result = database.prepare('INSERT INTO orders (reference, user_id, total_ars, status, shipping_cost_ars, shipping_method, shipping_name, shipping_phone, shipping_street, shipping_city, shipping_province, shipping_postal_code, shipping_notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(reference, userId, total, 'pending_payment', shippingDetails.costArs, shippingDetails.method, shippingDetails.name, shippingDetails.phone, shippingDetails.street, shippingDetails.city, shippingDetails.province, shippingDetails.postalCode, shippingDetails.notes)
+    const result = database.prepare('INSERT INTO orders (reference, user_id, total_ars, status, shipping_cost_ars, shipping_method, shipping_name, shipping_phone, shipping_street, shipping_city, shipping_province, shipping_postal_code, shipping_notes, payment_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(reference, userId, total, 'pending_payment', shippingDetails.costArs, shippingDetails.method, shippingDetails.name, shippingDetails.phone, shippingDetails.street, shippingDetails.city, shippingDetails.province, shippingDetails.postalCode, shippingDetails.notes, paymentMethod)
     const orderId = Number(result.lastInsertRowid)
     const insertItem = database.prepare('INSERT INTO order_items (order_id, product_id, product_name, product_slug, image_url, size, quantity, unit_price_ars) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
     for (const item of orderItems) {
@@ -905,7 +923,12 @@ setInterval(cancelExpiredPendingOrders, 60 * 60 * 1000).unref()
 
 app.post('/api/orders', requireAuth, (request, response) => {
   try {
-    const result = createOrderRecord(request, request.body.items, request.body.shipping)
+    if (request.body.paymentMethod !== 'transfer') throw new Error('Elige un medio de pago válido.')
+    if (request.body.acceptTerms !== true) throw new Error('Debes aceptar los términos y condiciones para continuar.')
+    if (!transferDetails()) throw new Error('Las transferencias no están disponibles por el momento.')
+    const result = createOrderRecord(request, request.body.items, request.body.shipping, { paymentMethod: 'transfer' })
+    result.order.paymentMethod = 'transfer'
+    result.order.transfer = transferDetails()
     void sendOrderEmail(result.order.id, 'created')
     response.status(201).json(result)
   } catch (error) {

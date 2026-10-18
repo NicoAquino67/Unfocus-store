@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { apiRequest, type AccountUser, type ShippingDetails, type StoreConfig } from './api'
+
+export type PaymentMethod = 'mercadopago' | 'transfer'
 import { calculateShipping } from './shipping'
 import { formatPrice, type DisplayCurrency } from './catalog'
 
@@ -10,17 +12,19 @@ type CheckoutFormProps = {
   user: AccountUser
   subtotal: number
   shipping: StoreConfig['shipping'] | null
+  transfer: StoreConfig['transfer']
   currency: DisplayCurrency
   usdArsRate: number | null
   isSubmitting: boolean
   onBack: () => void
   onOpenTerms: () => void
-  onSubmit: (shipping: ShippingDetails, acceptTerms: boolean) => void
+  onSubmit: (shipping: ShippingDetails, acceptTerms: boolean, paymentMethod: PaymentMethod) => void
 }
 
-function CheckoutForm({ user, subtotal, shipping, currency, usdArsRate, isSubmitting, onBack, onOpenTerms, onSubmit }: CheckoutFormProps) {
+function CheckoutForm({ user, subtotal, shipping, transfer, currency, usdArsRate, isSubmitting, onBack, onOpenTerms, onSubmit }: CheckoutFormProps) {
   const [form, setForm] = useState<ShippingDetails>({ method: 'delivery', name: user.name, phone: user.phone ?? '', street: '', city: '', province: '', postalCode: '', notes: '' })
   const [acceptTerms, setAcceptTerms] = useState(false)
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('mercadopago')
   const canPickup = Boolean(shipping?.pickupAddress)
 
   useEffect(() => {
@@ -38,7 +42,7 @@ function CheckoutForm({ user, subtotal, shipping, currency, usdArsRate, isSubmit
   const update = (field: keyof ShippingDetails, value: string) => setForm((current) => ({ ...current, [field]: value }))
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    onSubmit(form, acceptTerms)
+    onSubmit(form, acceptTerms, paymentMethod === 'transfer' && !transfer ? 'mercadopago' : paymentMethod)
   }
   const isDelivery = form.method === 'delivery'
 
@@ -73,9 +77,27 @@ function CheckoutForm({ user, subtotal, shipping, currency, usdArsRate, isSubmit
         <div className="checkout-form__total"><dt>Total</dt><dd>{formatPrice(subtotal + shippingCost, currency, usdArsRate)}</dd></div>
       </dl>
       {isDelivery && shipping && shipping.freeThresholdArs > 0 && shippingCost > 0 && <p className="checkout-form__hint">Envío gratis desde {formatPrice(shipping.freeThresholdArs, currency, usdArsRate)}.</p>}
+      {transfer && (
+        <fieldset className="checkout-form__methods">
+          <legend>Medio de pago</legend>
+          <label><input type="radio" name="payment" checked={paymentMethod === 'mercadopago'} onChange={() => setPaymentMethod('mercadopago')} /> Mercado Pago (tarjetas, cuotas, dinero en cuenta)</label>
+          <label><input type="radio" name="payment" checked={paymentMethod === 'transfer'} onChange={() => setPaymentMethod('transfer')} /> Transferencia bancaria</label>
+        </fieldset>
+      )}
+      {transfer && paymentMethod === 'transfer' && (
+        <div className="checkout-form__transfer">
+          <strong>Cómo pagar por transferencia</strong>
+          <ol>
+            <li>Confirma el pedido: te mostramos y enviamos por correo los datos de la cuenta.</li>
+            <li>Transfiere el total{transfer.alias ? ` al alias ${transfer.alias}` : ''} con el código del pedido como concepto.</li>
+            <li>Envíanos el comprobante por correo. Confirmamos el pago y preparamos tu envío.</li>
+          </ol>
+          <p>Si no recibimos el pago en 3 días, el pedido se cancela y el stock se libera.</p>
+        </div>
+      )}
       <label className="checkout-form__terms"><input type="checkbox" required checked={acceptTerms} onChange={(event) => setAcceptTerms(event.target.checked)} /><span>Acepto los <button type="button" onClick={onOpenTerms}>términos y condiciones</button> y la política de cambios.</span></label>
-      <p className="cart-tax-note">Se cobra en ARS a través de Mercado Pago.</p>
-      <button className="button button--coral checkout-button" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Preparando pago…' : 'Pagar con Mercado Pago'} <ArrowRight size={17} /></button>
+      <p className="cart-tax-note">{paymentMethod === 'transfer' ? 'El importe se transfiere en ARS.' : 'Se cobra en ARS a través de Mercado Pago.'}</p>
+      <button className="button button--coral checkout-button" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Preparando pago…' : paymentMethod === 'transfer' ? 'Confirmar y pagar por transferencia' : 'Pagar con Mercado Pago'} <ArrowRight size={17} /></button>
     </form>
   )
 }

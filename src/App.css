@@ -438,3 +438,7 @@
 .checkout-form__total { font-weight: 700; font-size: 15px !important; }
 .checkout-form__terms { display: flex !important; align-items: flex-start; gap: 8px; }
 .checkout-form__terms button { padding: 0; border: 0; background: none; color: var(--brand-blue-deep); text-decoration: underline; font: inherit; cursor: pointer; }
+
+.checkout-form__transfer { padding: 12px; border: 1px solid var(--line); font-size: 13px; line-height: 1.5; }
+.checkout-form__transfer ol { margin: 6px 0; padding-left: 18px; }
+.checkout-form__transfer p { margin: 4px 0 0; color: #666; }

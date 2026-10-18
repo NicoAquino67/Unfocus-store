@@ -126,3 +126,5 @@
 .admin-tracking-form button { min-height: 36px; border: 0; background: var(--brand-blue-deep); color: #fff; font: 600 11px var(--sans); cursor: pointer; }
 .admin-settings-panel { margin-top: 28px; padding: 22px; border: 1px solid var(--line); background: #fff; }
 .admin-settings-panel__message { margin: 12px 0 0; color: var(--brand-blue-deep); font-size: 12px; }
+
+.admin-hint { margin: 0 0 8px; color: #666; font-size: 12px; }

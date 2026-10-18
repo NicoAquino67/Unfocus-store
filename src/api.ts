@@ -28,6 +28,8 @@ export type ShippingDetails = {
   notes: string
 }
 
+export type TransferDetails = { holder: string; bank: string; cbu: string; alias: string; taxId: string }
+
 export type OrderStatus = 'pending_payment' | 'paid' | 'shipped' | 'delivered' | 'cancelled'
 
 export type AccountOrder = {
@@ -38,6 +40,8 @@ export type AccountOrder = {
   status: OrderStatus | string
   createdAt: string
   paymentUrl?: string | null
+  paymentMethod?: 'mercadopago' | 'transfer'
+  transfer?: TransferDetails | null
   shipping: ShippingDetails
   carrier: string
   trackingCode: string
@@ -83,6 +87,11 @@ export type StoreSettings = {
   address: string
   email: string
   phone: string
+  transferHolder: string
+  transferBank: string
+  transferCbu: string
+  transferAlias: string
+  transferTaxId: string
 }
 
 export type AdminSummary = {
@@ -116,6 +125,7 @@ export type StoreConfig = {
   exchangeSource: string | null
   exchangeUpdatedAt: string | null
   shipping: { costArs: number; freeThresholdArs: number; pickupAddress: string }
+  transfer: TransferDetails | null
   store: { legalName: string; taxId: string; address: string; email: string; phone: string }
 }
 
