@@ -72,7 +72,7 @@ ARS es la moneda base de catálogo, administración y pedidos. Si `USD_ARS_RATE`
 ## Persistencia y despliegue
 
 - SQLite: `data/unfocus.sqlite` (se puede cambiar con `DATABASE_PATH`).
-- Imágenes subidas desde el panel: `uploads/`.
+- Imágenes subidas desde el panel: `uploads/` (se puede cambiar con `UPLOAD_DIR`). Las imágenes semilla están en `ident/` (fuera de Git, se puede cambiar con `IDENT_DIR`).
 - `.env`, la base de datos y las imágenes subidas están excluidos de Git.
 - Para producción, configura `NODE_ENV=production`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, almacenamiento persistente y HTTPS; ejecuta `npm run build` y luego `npm start`.
 
@@ -90,6 +90,13 @@ Cuando `MP_ACCESS_TOKEN` existe, el checkout crea una preferencia de pago (con e
 - Producción: no definas `MP_WEBHOOK_URL`; con `NODE_ENV=production` se usa `PUBLIC_BASE_URL/api/payments/webhook`.
 - Un pedido se cancela automáticamente con más de 3 intentos de pago rechazados.
 - Pendiente: verificar la firma `x-signature` de las notificaciones.
+
+### Hostinger (Business/Cloud con Node.js Web Apps)
+
+1. Crear el subdominio (ej. `dev.unfocus.shop`) y una Node.js Web App conectada al repositorio de GitHub; elegir Node 22 o superior (`node:sqlite`).
+2. Build command: `npm install && npm run build`. Start command: `npm start`.
+3. Variables en el panel: `NODE_ENV=production`, `PUBLIC_BASE_URL=https://dev.unfocus.shop`, `MP_WEBHOOK_URL=https://dev.unfocus.shop/api/payments/webhook`, `MP_WEBHOOK_SECRET`, `MP_ACCESS_TOKEN` (credenciales de prueba), `ADMIN_EMAIL`, `ADMIN_PASSWORD`, SMTP y datos de la tienda.
+4. Para que los datos sobrevivan a los despliegues, crear una carpeta fuera de la app (ej. `/home/USUARIO/unfocus-data`) y definir `DATABASE_PATH`, `UPLOAD_DIR` e `IDENT_DIR` apuntando a ella; copiar allí las imágenes de `ident/` por el Administrador de archivos.
 
 ### Paquete Docker
 

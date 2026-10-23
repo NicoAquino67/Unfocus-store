@@ -18,7 +18,8 @@ const mercadoPagoEnvironment = process.env.MP_ENVIRONMENT?.trim().toLowerCase() 
 const mercadoPagoIsTestMode = mercadoPagoEnvironment === 'test'
 const publicBaseUrl = process.env.PUBLIC_BASE_URL || (isProduction ? 'https://localhost' : 'http://localhost:5173')
 const databasePath = process.env.DATABASE_PATH || path.join(projectDirectory, 'data', 'unfocus.sqlite')
-const uploadDirectory = path.join(projectDirectory, 'uploads')
+const uploadDirectory = process.env.UPLOAD_DIR ? path.resolve(process.env.UPLOAD_DIR) : path.join(projectDirectory, 'uploads')
+const identDirectory = process.env.IDENT_DIR ? path.resolve(process.env.IDENT_DIR) : path.join(projectDirectory, 'ident')
 const sessionCookieName = 'unfocus_session'
 const sessionLifetimeMs = 1000 * 60 * 60 * 24 * 14
 const maximumImageBytes = 4 * 1024 * 1024
@@ -565,7 +566,7 @@ app.use((request, response, next) => {
   next()
 })
 app.use('/uploads', express.static(uploadDirectory, { maxAge: '1y', immutable: true, fallthrough: false }))
-app.use('/ident', express.static(path.join(projectDirectory, 'ident'), { maxAge: '1d' }))
+app.use('/ident', express.static(identDirectory, { maxAge: '1d' }))
 
 app.use('/api', (request, response, next) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) {
