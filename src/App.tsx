@@ -18,8 +18,8 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import unfocusLogo from '../ident/png full color.png'
-import unfocusLogoWhite from '../ident/png blanco.png'
+import unfocusLogo from './assets/logo-full-color.png'
+import unfocusLogoWhite from './assets/logo-blanco.png'
 import PriceTag from './PriceTag'
 import { categories, getSalePrice, formatPrice, getDefaultSize, getProductImage, getProductFacets, getStockForSize, giftCardAmounts, giftCardMaximum, giftCardMinimum, isValidGiftCardAmount, initialProducts, normalizeProductFacets, garmentCuts, productAudiences, productGenders, sizes, type CategoryFilter, type DisplayCurrency, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
 import { apiRequest, type AccountNotification, type AccountSummary, type AccountUser, type ProductReview, type StoreConfig } from './api'
@@ -416,6 +416,7 @@ const readRecentlyViewed = (): string[] => {
 
 function App() {
   const [products, setProducts] = useState<Product[]>(() => initialProducts.map(normalizeProductFacets))
+  const showcaseProducts = products.filter((product) => !product.isGiftCard && getProductImage(product, 1))
   const [currentUser, setCurrentUser] = useState<AccountUser | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [isAccountPage, setIsAccountPage] = useState(() => new URLSearchParams(window.location.search).get('cuenta') === '1')
@@ -947,7 +948,7 @@ function App() {
         ) : (
           <>
         <section className="hero" aria-labelledby="hero-title">
-          <img className="hero__image" src={getProductImage(initialProducts[0], 1)} alt="Espalda de la camiseta Mind Unfiltered con su ilustración original" />
+          {showcaseProducts[0] && <img className="hero__image" src={getProductImage(showcaseProducts[0], 1)} alt={`Espalda de ${showcaseProducts[0].name}`} />}
           <div className="hero__veil" />
           <div className="hero__content">
             <p className="eyebrow hero__eyebrow"><span /> Diseñada desde la experiencia neurodivergente</p>
@@ -1024,7 +1025,7 @@ function App() {
         </section>
 
         <section className="story-section" id="historia">
-          <div className="story-image-wrap"><img src={getProductImage(initialProducts[1], 1)} alt="Espalda de la camiseta No Molestar con su diseño original" loading="lazy" /><span className="story-image-label">UNFOCUS · A TU RITMO</span></div>
+          <div className="story-image-wrap">{(showcaseProducts[1] ?? showcaseProducts[0]) && <img src={getProductImage(showcaseProducts[1] ?? showcaseProducts[0], 1)} alt={`Espalda de ${(showcaseProducts[1] ?? showcaseProducts[0]).name}`} loading="lazy" />}<span className="story-image-label">UNFOCUS · A TU RITMO</span></div>
           <div className="story-copy"><p className="eyebrow">La comodidad también es personal</p><h2>Tu forma de sentir<br />es <em>la medida.</em></h2><p>La textura, las costuras, el ajuste y las etiquetas importan. Por eso describimos cada prenda con claridad: para que puedas decidir cómo se sentirá antes de que llegue a casa. Sin reglas sobre cómo vestirte. Sin prisa.</p><a className="text-link" href="#coleccion">Encuentra tu comodidad <ArrowUpRight size={17} aria-hidden="true" /></a><span className="story-scribble" aria-hidden="true">sé tú, a tu ritmo</span></div>
         </section>
 
