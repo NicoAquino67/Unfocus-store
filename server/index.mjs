@@ -203,6 +203,31 @@ const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().m
     );
     CREATE INDEX IF NOT EXISTS payment_attempts_order_id_idx ON payment_attempts(order_id);
   `)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS saved_addresses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      name TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      street TEXT NOT NULL,
+      city TEXT NOT NULL,
+      province TEXT NOT NULL,
+      postal_code TEXT NOT NULL,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS saved_addresses_user_id_idx ON saved_addresses(user_id, is_default DESC, id DESC);
+    CREATE TABLE IF NOT EXISTS restock_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      size TEXT NOT NULL,
+      email TEXT NOT NULL COLLATE NOCASE,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(product_id, size, email)
+    );
+    CREATE INDEX IF NOT EXISTS restock_subscriptions_product_size_idx ON restock_subscriptions(product_id, size);
+  `)
   if (!columns.has('stock')) database.exec('ALTER TABLE products ADD COLUMN stock INTEGER NOT NULL DEFAULT 0')
   if (!userColumns.has('is_guest')) database.exec('ALTER TABLE users ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0')
   if (!columns.has('is_gift_card')) database.exec('ALTER TABLE products ADD COLUMN is_gift_card INTEGER NOT NULL DEFAULT 0')
@@ -342,6 +367,24 @@ const sendMail = async ({ to, subject, text, replyTo, fromName = 'UnFocus' }) =>
   } catch (error) {
     console.error('Email delivery failed:', error.message)
     return false
+  }
+}
+
+const notifyRestockedCustomers = async (productId, productName, stockBySize) => {
+  const productSlug = database.prepare('SELECT slug FROM products WHERE id = ?').get(productId)?.slug
+  const productUrl = `${publicBaseUrl.replace(/\/+$/, '')}/?producto=${encodeURIComponent(productSlug ?? '')}`
+  for (const [size, quantity] of Object.entries(stockBySize)) {
+    if (Number(quantity) <= 0) continue
+    const subscriptions = database.prepare('SELECT id, email FROM restock_subscriptions WHERE product_id = ? AND size = ?').all(productId, size)
+    for (const subscription of subscriptions) {
+      const sent = await sendMail({
+        to: subscription.email,
+        subject: `${productName} volvió a tener stock`,
+        text: `¡Buenas noticias! ${productName}, talle ${size}, volvió a estar disponible.\n\nVisita la tienda para ver la prenda: ${productUrl}`,
+      })
+      if (sent) database.prepare('DELETE FROM restock_subscriptions WHERE id = ?').run(subscription.id)
+      else console.warn('Restock notification email could not be delivered; subscription retained.', { productId, size })
+    }
   }
 }
 
@@ -614,6 +657,7 @@ const requireAdmin = (request, response, next) => {
 }
 
 const authAttempts = new Map()
+const restockAttempts = new Map()
 const limitAuthAttempts = (request, response, next) => {
   const now = Date.now()
   const key = request.ip || 'unknown'
@@ -621,6 +665,15 @@ const limitAuthAttempts = (request, response, next) => {
   if (activeAttempts.length >= 12) return response.status(429).json({ error: 'Demasiados intentos. Espera unos minutos y vuelve a probar.' })
   activeAttempts.push(now)
   authAttempts.set(key, activeAttempts)
+  next()
+}
+const limitRestockRequests = (request, response, next) => {
+  const now = Date.now()
+  const key = request.ip || 'unknown'
+  const activeAttempts = (restockAttempts.get(key) ?? []).filter((time) => now - time < 10 * 60 * 1000)
+  if (activeAttempts.length >= 10) return response.status(429).json({ error: 'Demasiadas solicitudes. Espera unos minutos y vuelve a probar.' })
+  activeAttempts.push(now)
+  restockAttempts.set(key, activeAttempts)
   next()
 }
 
@@ -874,6 +927,7 @@ app.put('/api/admin/products/:id', requireAdmin, async (request, response) => {
   try {
     const product = await requireProductBody(request.body)
     updateProduct.run(product.slug, product.name, product.category, product.price, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue, id)
+    await notifyRestockedCustomers(id, product.name, product.stockBySize || {})
     response.json({ product: productFromRow(selectProductById.get(id)) })
   } catch (error) {
     response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un producto con ese enlace.' : error.message })
@@ -923,6 +977,88 @@ const serializeOrder = (order, extra = {}) => ({
 app.get('/api/account/shipping', requireAuth, (request, response) => {
   const last = database.prepare('SELECT * FROM orders WHERE user_id = ? AND shipping_name IS NOT NULL ORDER BY id DESC LIMIT 1').get(request.user.id)
   response.json({ shipping: last ? serializeOrder(last).shipping : null, name: request.user.name, phone: request.user.phone ?? '' })
+})
+
+const addressSelect = `SELECT id, label, name, phone, street, city, province, postal_code AS postalCode, is_default AS isDefault FROM saved_addresses WHERE user_id = ?`
+const parseAddressBody = (input) => {
+  const label = cleanText(input?.label, 50)
+  const name = cleanText(input?.name, 80)
+  const phone = cleanText(input?.phone, 40)
+  const street = cleanText(input?.street, 120)
+  const city = cleanText(input?.city, 80)
+  const province = cleanText(input?.province, 80)
+  const postalCode = cleanText(input?.postalCode, 10).toUpperCase()
+  if (label.length < 2 || name.length < 2 || phone.length < 6 || street.length < 3 || city.length < 2 || province.length < 2 || !/^[A-Z0-9 -]{4,10}$/.test(postalCode)) {
+    throw new Error('Completa todos los datos de la dirección con información válida.')
+  }
+  return { label, name, phone, street, city, province, postalCode, isDefault: input?.isDefault === true }
+}
+
+const setDefaultAddress = (userId, addressId) => {
+  database.prepare('UPDATE saved_addresses SET is_default = 0 WHERE user_id = ?').run(userId)
+  database.prepare('UPDATE saved_addresses SET is_default = 1 WHERE id = ? AND user_id = ?').run(addressId, userId)
+}
+
+app.get('/api/account/addresses', requireAuth, (request, response) => {
+  response.json({ addresses: database.prepare(`${addressSelect} ORDER BY is_default DESC, id DESC`).all(request.user.id).map((address) => ({ ...address, isDefault: Boolean(address.isDefault) })) })
+})
+
+app.post('/api/account/addresses', requireAuth, (request, response) => {
+  try {
+    const address = parseAddressBody(request.body)
+    const count = database.prepare('SELECT COUNT(*) AS count FROM saved_addresses WHERE user_id = ?').get(request.user.id).count
+    const result = database.prepare('INSERT INTO saved_addresses (user_id, label, name, phone, street, city, province, postal_code, is_default) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(request.user.id, address.label, address.name, address.phone, address.street, address.city, address.province, address.postalCode, Number(address.isDefault || count === 0))
+    if (address.isDefault) setDefaultAddress(request.user.id, Number(result.lastInsertRowid))
+    response.status(201).json({ addresses: database.prepare(`${addressSelect} ORDER BY is_default DESC, id DESC`).all(request.user.id).map((item) => ({ ...item, isDefault: Boolean(item.isDefault) })) })
+  } catch (error) {
+    response.status(400).json({ error: error.message || 'No se pudo guardar la dirección.' })
+  }
+})
+
+app.put('/api/account/addresses/:id', requireAuth, (request, response) => {
+  const id = Number(request.params.id)
+  if (!Number.isSafeInteger(id)) return response.status(400).json({ error: 'Identificador inválido.' })
+  try {
+    const address = parseAddressBody(request.body)
+    const previous = database.prepare('SELECT is_default FROM saved_addresses WHERE id = ? AND user_id = ?').get(id, request.user.id)
+    const result = database.prepare('UPDATE saved_addresses SET label = ?, name = ?, phone = ?, street = ?, city = ?, province = ?, postal_code = ? WHERE id = ? AND user_id = ?').run(address.label, address.name, address.phone, address.street, address.city, address.province, address.postalCode, id, request.user.id)
+    if (!result.changes) return response.status(404).json({ error: 'Dirección no encontrada.' })
+    if (address.isDefault) setDefaultAddress(request.user.id, id)
+    else if (previous?.is_default) {
+      const next = database.prepare('SELECT id FROM saved_addresses WHERE user_id = ? AND id != ? ORDER BY id DESC LIMIT 1').get(request.user.id, id)
+      setDefaultAddress(request.user.id, next?.id ?? id)
+    }
+    response.json({ addresses: database.prepare(`${addressSelect} ORDER BY is_default DESC, id DESC`).all(request.user.id).map((item) => ({ ...item, isDefault: Boolean(item.isDefault) })) })
+  } catch (error) {
+    response.status(400).json({ error: error.message || 'No se pudo actualizar la dirección.' })
+  }
+})
+
+app.delete('/api/account/addresses/:id', requireAuth, (request, response) => {
+  const id = Number(request.params.id)
+  if (!Number.isSafeInteger(id)) return response.status(400).json({ error: 'Identificador inválido.' })
+  const existing = database.prepare('SELECT is_default FROM saved_addresses WHERE id = ? AND user_id = ?').get(id, request.user.id)
+  if (!existing) return response.status(404).json({ error: 'Dirección no encontrada.' })
+  database.prepare('DELETE FROM saved_addresses WHERE id = ? AND user_id = ?').run(id, request.user.id)
+  if (existing.is_default) {
+    const next = database.prepare('SELECT id FROM saved_addresses WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(request.user.id)
+    if (next) setDefaultAddress(request.user.id, next.id)
+  }
+  response.json({ addresses: database.prepare(`${addressSelect} ORDER BY is_default DESC, id DESC`).all(request.user.id).map((item) => ({ ...item, isDefault: Boolean(item.isDefault) })) })
+})
+
+app.post('/api/products/:slug/restock-notifications', limitRestockRequests, (request, response) => {
+  const product = database.prepare('SELECT id, name, is_gift_card, stock_by_size FROM products WHERE slug = ?').get(request.params.slug)
+  if (!product || product.is_gift_card) return response.status(404).json({ error: 'Producto no encontrado.' })
+  const email = typeof request.body?.email === 'string' ? request.body.email.trim().toLowerCase() : ''
+  const size = typeof request.body?.size === 'string' ? request.body.size.trim().toUpperCase() : ''
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || !/^(XS|S|M|L|XL|2XL|3XL)$/.test(size)) {
+    return response.status(400).json({ error: 'Ingresa un correo válido y selecciona un talle.' })
+  }
+  const stockBySize = JSON.parse(product.stock_by_size || '{}')
+  if (Number(stockBySize[size] ?? 0) > 0) return response.status(409).json({ error: 'Ese talle ya está disponible. Actualiza la página para comprarlo.' })
+  database.prepare('INSERT OR IGNORE INTO restock_subscriptions (product_id, size, email) VALUES (?, ?, ?)').run(product.id, size, email)
+  response.status(201).json({ message: `Te avisaremos por email cuando vuelva ${product.name}, talle ${size}.` })
 })
 
 app.get('/api/account/summary', requireAuth, (request, response) => {

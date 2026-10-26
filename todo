@@ -8,7 +8,7 @@ A. MVP PARA SALIR A PRODUCCIÓN Y VENDER
 
 Catálogo y tienda
 [x] Catálogo con fichas de producto, galería frente/espalda y descripción
-[ ] la herramienta de busqueda deberia de desplegar una lista con los productos que el usuario busca por su nombre, o similar
+[x] La búsqueda global despliega sugerencias de productos por nombre, categoría o características
 [x] Filtros por corte, público, género y promociones
 [x] Stock por talle, con reserva al crear el pedido y liberación al cancelar
 [x] Guía de talles con equivalencia argentina y tabla de medidas
@@ -39,12 +39,14 @@ Pedidos y logística
 [x] Transporte, código y link de seguimiento visibles para el cliente
 [x] Panel admin: pedidos con dirección de entrega y formulario de despacho
 [x] Restaurar stock cuando el admin cancela un pedido manualmente (hoy solo lo hace la cancelación automática)
-[ ] Etiquetas de envío / integración con un correo (Andreani, Correo Argentino…)
+[ ] Etiquetas de envío / integración con Correo Argentino (requiere credenciales y acceso a su API)
 
 Emails transaccionales
 [x] Pago recibido, pedido despachado, pedido cancelado, recuperación de contraseña, contacto
-[ ] Configurar SMTP real (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, CONTACT_FROM_EMAIL) y probar el envío
+[x] Configurar SMTP real (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, CONTACT_FROM_EMAIL) y probar el envío
 [x] Email de pedido creado / bienvenida (opcional)
+
+[ ]crear mail contacto@unfocus.shop
 
 Legales (Argentina)
 [x] Términos y condiciones, privacidad, cambios y devoluciones, botón de arrepentimiento
@@ -67,7 +69,7 @@ B. PARA ACERCARSE A NIKE.COM U OTRA TIENDA GRANDE
 ========================================
 
 Descubrimiento
-[ ] Buscador global con sugerencias
+[x] Buscador global con sugerencias
 [ ] Categorías y navegación por menús (hombre / mujer / niños / novedades / ofertas)
 [x] Ordenar por precio, novedad y popularidad
 [ ] Paginación o carga infinita
@@ -78,8 +80,8 @@ Descubrimiento
 
 Ficha de producto
 [x] Zoom y más imágenes por producto (3 a 10; video pendiente)
-[ ] Aviso "volver a tener stock" por email
-[ ] Calculadora de envío por código postal en la ficha
+[x] Aviso "volver a tener stock" por email
+[ ] Calculadora de envío por código postal en la ficha (estimación con tarifa fija disponible; cotización real por API pendiente de credenciales)
 [ ] Estimación de fecha de entrega
 [x] Preguntas y respuestas
 
@@ -87,9 +89,9 @@ Checkout
 [x] Compra como invitado
 [x] Cupones y códigos de descuento
 [x] Tarjeta de regalo
-[ ] Múltiples direcciones guardadas en la cuenta
+[x] Múltiples direcciones guardadas en la cuenta y selección en el checkout
 [ ] Recuperación de carrito abandonado por email
-[ ] Seguimiento de envío integrado con el transporte
+[ ] Seguimiento de envío integrado con el transporte (vista de estado y enlace manual ya disponible; consulta automática por API pendiente de credenciales)
 
 Cuenta y fidelización
 [ ] Programa de membresía / puntos
@@ -122,3 +124,24 @@ Operación y calidad
 [ ] Cargar datos bancarios de transferencia y datos legales en el panel admin
 [ ] Probar en la web con pagos reales/sandbox: cupones, invitado, tarjeta de regalo, transferencia
 [ ] Subir a producción las imágenes semilla de ident/ (carpeta fuera de git)
+
+========================================
+C. CONTROL DE CALIDAD DE LA PÁGINA (consejos de Hostinger)
+========================================
+
+Móvil (puntuación actual entre paréntesis; 0 = crítico, 50 = mejorable, 94 = correcto)
+[ ] Avoid multiple page redirects: evitar redirecciones múltiples (http→https, www→raíz) (0)
+[ ] LCP request discovery: que la imagen principal (LCP) se descubra pronto en el HTML (preload, sin lazy-load, fetchpriority="high") (0)
+[ ] Render-blocking requests: eliminar CSS/JS que bloquean el renderizado inicial (0)
+[ ] Reduce unused JavaScript: dividir el bundle (code-splitting / import() dinámico; hoy ~620 kB) (0)
+[ ] Document request latency: reducir la latencia de la petición del documento (TTFB, compresión, caché) (0)
+[ ] Network dependency tree: acortar las cadenas de peticiones encadenadas (preconnect, evitar imports en cascada) (0)
+[ ] Reduce unused CSS: eliminar o dividir el CSS no usado (0)
+[ ] Improve image delivery: formatos modernos (WebP/AVIF), tamaños responsivos (srcset) y compresión (50)
+[ ] Use efficient cache lifetimes: cabeceras Cache-Control largas para assets con hash, imágenes y fuentes (50)
+[ ] Image elements do not have explicit width and height: definir width y height en todas las <img> (evita saltos de layout) (50)
+[x] Hora de interactuar (Time to Interactive) (94)
+[ ] Volver a medir en móvil tras los cambios y revisar si Hostinger lista más consejos fuera de los ya incluidos
+
+Desktop
+[ ] (pendiente: añadir aquí las mejoras de escritorio cuando se tengan los resultados)

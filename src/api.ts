@@ -28,6 +28,12 @@ export type ShippingDetails = {
   notes: string
 }
 
+export type SavedAddress = Omit<ShippingDetails, 'method' | 'notes'> & {
+  id: number
+  label: string
+  isDefault: boolean
+}
+
 export type TransferDetails = { holder: string; bank: string; cbu: string; alias: string; taxId: string }
 
 export type OrderStatus = 'pending_payment' | 'paid' | 'shipped' | 'delivered' | 'cancelled'

@@ -55,6 +55,22 @@
 .account-order__detail { margin-top: 14px; padding: 12px 0 0; border-top: 1px solid var(--line); }
 .account-order__detail-item { display: grid; grid-template-columns: 1.5fr .8fr .5fr auto; gap: 8px; align-items: center; padding: 7px 0; border-bottom: 1px dashed var(--line); color: var(--ink-soft); font-size: 10px; }
 .account-order__detail-item strong { color: var(--ink); font-size: 10px; }
+.account-addresses { display: grid; gap: 10px; }
+.account-address { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px; border: 1px solid var(--line); background: #fff; }
+.account-address > div:first-child { min-width: 0; }
+.account-address > div:first-child > strong { color: var(--ink); font-size: 12px; }
+.account-address p { margin: 6px 0 0; color: var(--ink-soft); font-size: 10px; }
+.account-address__default { margin-left: 9px; padding: 4px 6px; background: #edf8f7; color: #1d4c4a; font-size: 8px; font-weight: 700; }
+.account-address__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.account-address__actions button, .account-address__add { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 9px; border: 1px solid var(--line); background: #fff; color: var(--brand-blue-deep); font: 600 9px var(--sans); cursor: pointer; }
+.account-address__actions button:hover, .account-address__add:hover { border-color: var(--brand-blue); background: #f1f8fb; }
+.account-address-form { display: grid; gap: 14px; margin-top: 16px; padding: 16px; border: 1px solid var(--line); background: #fff; }
+.account-address-form h3 { margin: 0; color: var(--brand-blue-deep); font: 600 17px var(--display); }
+.account-address-form__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.account-address-form__default { display: flex; align-items: center; gap: 8px; color: var(--ink-soft); font-size: 10px; }
+.account-address-form__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.account-address-form__actions .button { min-height: 38px; font-size: 10px; }
+.account-address__add { margin-top: 14px; min-height: 38px; padding-inline: 12px; }
 .account-empty { margin: 0; padding: 18px 0; color: var(--muted); font-size: 11px; }
 .account-product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; }
 .account-product { position: relative; display: grid; grid-template-columns: 100px 1fr; grid-template-rows: 1fr auto; gap: 9px 13px; }
@@ -76,6 +92,9 @@
   .account-auth__form-wrap { padding: 18px; }
   .account-dashboard__header { flex-direction: column; }
   .account-dashboard__actions { flex-wrap: wrap; }
+  .account-address { align-items: flex-start; flex-direction: column; }
+  .account-address__actions { justify-content: flex-start; }
+  .account-address-form__grid { grid-template-columns: 1fr; }
   .account-order__summary { align-items: flex-start; flex-direction: column; }
   .account-order__summary > div:last-child { width: 100%; justify-content: space-between; }
   .account-product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 12px; }
@@ -87,6 +106,14 @@
 .account-order__shipping p { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
 .account-order__shipping span { color: var(--muted); }
 .account-order__status--shipped, .account-order__status--delivered { background: #e6f4ea; color: #1e6b3a; }
+.account-tracking { display: grid; gap: 9px; margin-top: 14px; padding: 13px; border: 1px solid var(--line); background: #fbfcfb; color: var(--ink-soft); font-size: 10px; }
+.account-tracking > strong { color: var(--brand-blue-deep); font-size: 11px; }
+.account-tracking ol { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.account-tracking li { padding-top: 7px; border-top: 2px solid var(--line); color: var(--muted); }
+.account-tracking li.is-complete { border-color: #4a8a82; color: #1d4c4a; }
+.account-tracking li.is-current { border-color: var(--brand-blue); color: var(--brand-blue-deep); font-weight: 700; }
+.account-tracking p { margin: 0; line-height: 1.5; }
+.account-tracking .account-order__pay { width: fit-content; margin-top: 0; }
 
 .account-order__transfer { margin-top: 10px; padding: 12px; border: 1px solid var(--line); font-size: 13px; line-height: 1.5; }
 .account-order__transfer ul { margin: 6px 0; padding-left: 18px; }

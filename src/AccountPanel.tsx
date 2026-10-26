@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { ArrowRight, Eye, EyeOff, Heart, LogOut, PackageCheck, ShieldCheck, UserRound } from 'lucide-react'
-import { apiRequest, type AccountOrder, type AccountSummary, type AccountUser } from './api'
+import { ArrowRight, Eye, EyeOff, Heart, LogOut, MapPin, PackageCheck, Pencil, Plus, ShieldCheck, Trash2, UserRound } from 'lucide-react'
+import { apiRequest, type AccountOrder, type AccountSummary, type AccountUser, type SavedAddress } from './api'
 import PriceTag from './PriceTag'
 import { formatPrice, getProductImage, type DisplayCurrency, type Product } from './catalog'
 import './AccountPanel.css'
@@ -46,6 +46,14 @@ function AccountPanel({ user, authLoading, currency, usdArsRate, onAuthenticated
   const [error, setError] = useState('')
   const [resetMessage, setResetMessage] = useState('')
   const [summary, setSummary] = useState<AccountSummary | null>(null)
+  const [addresses, setAddresses] = useState<SavedAddress[]>([])
+  const [addressDraft, setAddressDraft] = useState<Omit<SavedAddress, 'id'> & { id?: number }>({
+    label: '', name: user?.name ?? '', phone: user?.phone ?? '', street: '', city: '', province: '', postalCode: '', isDefault: false,
+  })
+  const [isAddressFormOpen, setIsAddressFormOpen] = useState(false)
+  const [isSavingAddress, setIsSavingAddress] = useState(false)
+  const [addressError, setAddressError] = useState('')
+  const [addressMessage, setAddressMessage] = useState('')
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null)
   const [summaryError, setSummaryError] = useState('')
 
@@ -60,6 +68,63 @@ function AccountPanel({ user, authLoading, currency, usdArsRate, onAuthenticated
       .catch((requestError: Error) => { if (isCurrent) setSummaryError(requestError.message) })
     return () => { isCurrent = false }
   }, [user])
+
+  useEffect(() => {
+    if (!user) return
+    let isCurrent = true
+    apiRequest<{ addresses: SavedAddress[] }>('/api/account/addresses')
+      .then(({ addresses: savedAddresses }) => { if (isCurrent) setAddresses(savedAddresses) })
+      .catch((requestError: Error) => { if (isCurrent) setAddressError(requestError.message) })
+    return () => { isCurrent = false }
+  }, [user])
+
+  const saveAddress = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setIsSavingAddress(true)
+    setAddressError('')
+    setAddressMessage('')
+    try {
+      const result = await apiRequest<{ addresses: SavedAddress[] }>(addressDraft.id ? `/api/account/addresses/${addressDraft.id}` : '/api/account/addresses', {
+        method: addressDraft.id ? 'PUT' : 'POST',
+        body: JSON.stringify(addressDraft),
+      })
+      setAddresses(result.addresses)
+      setAddressDraft({ label: '', name: user?.name ?? '', phone: user?.phone ?? '', street: '', city: '', province: '', postalCode: '', isDefault: false })
+      setIsAddressFormOpen(false)
+      setAddressMessage('Dirección guardada correctamente.')
+    } catch (requestError) {
+      setAddressError(requestError instanceof Error ? requestError.message : 'No se pudo guardar la dirección.')
+    } finally {
+      setIsSavingAddress(false)
+    }
+  }
+
+  const chooseDefaultAddress = async (address: SavedAddress) => {
+    setAddressError('')
+    setAddressMessage('')
+    try {
+      const result = await apiRequest<{ addresses: SavedAddress[] }>(`/api/account/addresses/${address.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ ...address, isDefault: true }),
+      })
+      setAddresses(result.addresses)
+      setAddressMessage(`“${address.label}” es ahora tu dirección predeterminada.`)
+    } catch (requestError) {
+      setAddressError(requestError instanceof Error ? requestError.message : 'No se pudo cambiar la dirección predeterminada.')
+    }
+  }
+
+  const removeAddress = async (address: SavedAddress) => {
+    setAddressError('')
+    setAddressMessage('')
+    try {
+      const result = await apiRequest<{ addresses: SavedAddress[] }>(`/api/account/addresses/${address.id}`, { method: 'DELETE' })
+      setAddresses(result.addresses)
+      setAddressMessage(`Se eliminó “${address.label}”.`)
+    } catch (requestError) {
+      setAddressError(requestError instanceof Error ? requestError.message : 'No se pudo eliminar la dirección.')
+    }
+  }
 
   const submitAuthentication = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -175,6 +240,38 @@ function AccountPanel({ user, authLoading, currency, usdArsRate, onAuthenticated
 
       {summaryError && <p className="account-error" role="alert">{summaryError}</p>}
 
+      <section className="account-section" aria-labelledby="addresses-title">
+        <div className="account-section__heading"><div><p className="eyebrow">Entrega</p><h2 id="addresses-title">Mis direcciones</h2></div><MapPin size={20} strokeWidth={1.6} aria-hidden="true" /></div>
+        {addresses.length > 0 ? <div className="account-addresses">{addresses.map((address) => (
+          <article className="account-address" key={address.id}>
+            <div><strong>{address.label}</strong>{address.isDefault && <span className="account-address__default">Predeterminada</span>}<p>{address.name} · {address.phone}</p><p>{address.street}, {address.city}, {address.province} ({address.postalCode})</p></div>
+            <div className="account-address__actions">
+              {!address.isDefault && <button type="button" onClick={() => void chooseDefaultAddress(address)}>Usar como predeterminada</button>}
+              <button type="button" onClick={() => { setAddressDraft(address); setIsAddressFormOpen(true); setAddressError(''); setAddressMessage('') }} aria-label={`Editar ${address.label}`}><Pencil size={14} aria-hidden="true" /> Editar</button>
+              <button type="button" onClick={() => void removeAddress(address)} aria-label={`Eliminar ${address.label}`}><Trash2 size={14} aria-hidden="true" /> Eliminar</button>
+            </div>
+          </article>
+        ))}</div> : <p className="account-empty">Todavía no guardaste direcciones. Puedes guardarlas aquí para elegirlas al comprar.</p>}
+        {addressError && <p className="account-error" role="alert">{addressError}</p>}
+        {addressMessage && <p className="account-success" role="status">{addressMessage}</p>}
+        {isAddressFormOpen ? (
+          <form className="account-address-form" onSubmit={saveAddress}>
+            <h3>{addressDraft.id ? 'Editar dirección' : 'Agregar dirección'}</h3>
+            <div className="account-address-form__grid">
+              <label className="account-field"><span>Nombre para identificarla</span><input required minLength={2} maxLength={50} value={addressDraft.label} onChange={(event) => setAddressDraft((current) => ({ ...current, label: event.target.value }))} placeholder="Casa, trabajo…" /></label>
+              <label className="account-field"><span>Nombre de quien recibe</span><input required minLength={2} maxLength={80} autoComplete="name" value={addressDraft.name} onChange={(event) => setAddressDraft((current) => ({ ...current, name: event.target.value }))} /></label>
+              <label className="account-field"><span>Teléfono</span><input required type="tel" minLength={6} maxLength={40} autoComplete="tel" value={addressDraft.phone} onChange={(event) => setAddressDraft((current) => ({ ...current, phone: event.target.value }))} /></label>
+              <label className="account-field"><span>Calle, número y piso/depto.</span><input required minLength={3} maxLength={120} autoComplete="street-address" value={addressDraft.street} onChange={(event) => setAddressDraft((current) => ({ ...current, street: event.target.value }))} /></label>
+              <label className="account-field"><span>Localidad</span><input required minLength={2} maxLength={80} autoComplete="address-level2" value={addressDraft.city} onChange={(event) => setAddressDraft((current) => ({ ...current, city: event.target.value }))} /></label>
+              <label className="account-field"><span>Provincia</span><input required minLength={2} maxLength={80} autoComplete="address-level1" value={addressDraft.province} onChange={(event) => setAddressDraft((current) => ({ ...current, province: event.target.value }))} /></label>
+              <label className="account-field"><span>Código postal</span><input required minLength={4} maxLength={10} autoComplete="postal-code" value={addressDraft.postalCode} onChange={(event) => setAddressDraft((current) => ({ ...current, postalCode: event.target.value.toUpperCase() }))} /></label>
+            </div>
+            <label className="account-address-form__default"><input type="checkbox" checked={addressDraft.isDefault} onChange={(event) => setAddressDraft((current) => ({ ...current, isDefault: event.target.checked }))} /> Usar como dirección predeterminada</label>
+            <div className="account-address-form__actions"><button className="button button--coral" type="submit" disabled={isSavingAddress}>{isSavingAddress ? 'Guardando…' : 'Guardar dirección'}</button><button className="button button--dark" type="button" onClick={() => { setIsAddressFormOpen(false); setAddressDraft({ label: '', name: user.name, phone: user.phone, street: '', city: '', province: '', postalCode: '', isDefault: false }) }}>Cancelar</button></div>
+          </form>
+        ) : <button className="account-address__add" type="button" onClick={() => { setAddressDraft({ label: '', name: user.name, phone: user.phone, street: '', city: '', province: '', postalCode: '', isDefault: addresses.length === 0 }); setIsAddressFormOpen(true); setAddressError(''); setAddressMessage('') }}><Plus size={16} aria-hidden="true" /> Agregar dirección</button>}
+      </section>
+
       <section className="account-section" aria-labelledby="orders-title">
         <div className="account-section__heading"><div><p className="eyebrow">Seguimiento</p><h2 id="orders-title">Pedidos recientes</h2></div><PackageCheck size={21} strokeWidth={1.6} aria-hidden="true" /></div>
         {summary?.orders.length ? <div className="account-orders">{summary.orders.map((order) => {
@@ -224,7 +321,18 @@ function AccountPanel({ user, authLoading, currency, usdArsRate, onAuthenticated
                   </div>
                 </div>
               )}
-              {order.trackingUrl && <a className="account-order__pay" href={order.trackingUrl} target="_blank" rel="noreferrer">Seguir mi envío <ArrowRight size={15} aria-hidden="true" /></a>}
+              {order.shipping.method === 'delivery' && ['paid', 'shipped', 'delivered'].includes(order.status) && (
+                <div className="account-tracking" aria-label={`Seguimiento de envío del pedido ${order.reference}`}>
+                  <strong>Seguimiento del envío</strong>
+                  <ol>
+                    <li className="is-complete">Pago confirmado</li>
+                    <li className={order.status === 'shipped' || order.status === 'delivered' ? 'is-complete' : 'is-current'}>Pedido despachado{order.shippedAt ? ` · ${formatOrderDate(order.shippedAt)}` : ''}</li>
+                    <li className={order.status === 'delivered' ? 'is-complete' : ''}>Entregado</li>
+                  </ol>
+                  {order.carrier && <p>Transporte: <b>{order.carrier}</b>{order.trackingCode ? ` · Código ${order.trackingCode}` : ''}</p>}
+                  {order.trackingUrl ? <a className="account-order__pay" href={order.trackingUrl} target="_blank" rel="noreferrer">Ver seguimiento del transporte <ArrowRight size={15} aria-hidden="true" /></a> : <p>El enlace de seguimiento aparecerá cuando se despache el pedido.</p>}
+                </div>
+              )}
             </article>
           )
         })}</div> : <p className="account-empty">Todavía no tienes pedidos. Cuando realices uno, aparecerá aquí.</p>}

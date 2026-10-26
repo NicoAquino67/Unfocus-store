@@ -23,6 +23,7 @@ import unfocusLogoWhite from './assets/logo-blanco.png'
 import PriceTag from './PriceTag'
 import { categories, getSalePrice, formatPrice, getDefaultSize, getProductImage, getProductFacets, getStockForSize, giftCardAmounts, giftCardMaximum, giftCardMinimum, isValidGiftCardAmount, initialProducts, normalizeProductFacets, garmentCuts, productAudiences, productGenders, sizes, type CategoryFilter, type DisplayCurrency, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
 import { apiRequest, type AccountNotification, type AccountSummary, type AccountUser, type ProductReview, type StoreConfig } from './api'
+import { calculateShipping } from './shipping'
 import AccountPanel from './AccountPanel'
 import ProductAdmin from './ProductAdmin'
 import CheckoutForm, { type CheckoutPayload } from './CheckoutForm'
@@ -37,6 +38,7 @@ type ProductDetailProps = {
   selectedSize: string
   selectedView: number
   currentUser: AccountUser | null
+  shipping: StoreConfig['shipping'] | null
   currency: DisplayCurrency
   usdArsRate: number | null
   onBack: () => void
@@ -68,7 +70,7 @@ const garmentMeasurements: Record<string, { chest: number; length: number }> = {
   '3XL': { chest: 66, length: 79 },
 }
 
-function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, selectedView, currentUser, currency, usdArsRate, onBack, onSelectRelated, onSizeChange, onViewChange, onAddToCart, onRequestLogin, onOpenContact }: ProductDetailProps) {
+function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, selectedView, currentUser, shipping, currency, usdArsRate, onBack, onSelectRelated, onSizeChange, onViewChange, onAddToCart, onRequestLogin, onOpenContact }: ProductDetailProps) {
   const [isGalleryHovering, setIsGalleryHovering] = useState(false)
   const [reviewResult, setReviewResult] = useState<{ slug: string; reviews: ProductReview[] } | null>(null)
   const [zoomOrigin, setZoomOrigin] = useState<string | null>(null)
@@ -76,6 +78,12 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
   const [reviewComment, setReviewComment] = useState('')
   const [reviewMessage, setReviewMessage] = useState('')
   const [isSubmittingReview, setIsSubmittingReview] = useState(false)
+  const [restockEntry, setRestockEntry] = useState({ key: '', email: '' })
+  const [restockResult, setRestockResult] = useState<{ key: string; message: string } | null>(null)
+  const [isSubmittingRestock, setIsSubmittingRestock] = useState(false)
+  const [postalCode, setPostalCode] = useState('')
+  const [shippingEstimate, setShippingEstimate] = useState<number | null>(null)
+  const [shippingEstimateError, setShippingEstimateError] = useState('')
 
   const baseViews = product.gallery && product.gallery.length > 0 ? [...product.gallery] : [{ src: getProductImage(product), alt: product.alt, label: 'Vista principal' }]
   const views = [...baseViews]
@@ -94,6 +102,43 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
       onViewChange(0)
     }
   }, [selectedView, views.length, onViewChange])
+
+  const restockKey = `${product.slug}:${selectedSize}`
+  const restockEmail = restockEntry.key === restockKey ? restockEntry.email : currentUser?.email ?? ''
+  const restockMessage = restockResult?.key === restockKey ? restockResult.message : ''
+
+  const requestRestockNotification = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setIsSubmittingRestock(true)
+    setRestockResult(null)
+    try {
+      const result = await apiRequest<{ message: string }>(`/api/products/${encodeURIComponent(product.slug)}/restock-notifications`, {
+        method: 'POST',
+        body: JSON.stringify({ email: restockEmail, size: selectedSize }),
+      })
+      setRestockResult({ key: restockKey, message: result.message })
+    } catch (requestError) {
+      setRestockResult({ key: restockKey, message: requestError instanceof Error ? requestError.message : 'No se pudo registrar el aviso.' })
+    } finally {
+      setIsSubmittingRestock(false)
+    }
+  }
+
+  const estimateShipping = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!/^[A-Za-z0-9 -]{4,10}$/.test(postalCode.trim())) {
+      setShippingEstimateError('Ingresa un código postal válido.')
+      setShippingEstimate(null)
+      return
+    }
+    if (!shipping) {
+      setShippingEstimateError('El costo de envío todavía no está configurado.')
+      setShippingEstimate(null)
+      return
+    }
+    setShippingEstimateError('')
+    setShippingEstimate(calculateShipping(getSalePrice(product), 'delivery', shipping))
+  }
 
   useEffect(() => {
     if (views.length <= 1 || isGalleryHovering) return
@@ -216,6 +261,25 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
             </div>
             <p className="product-detail__size-note">La equivalencia puede variar según el calce de la prenda.</p>
           </div>
+          )}
+          {!product.isGiftCard && getStockForSize(product, selectedSize) <= 0 && (
+            <form className="restock-alert" onSubmit={requestRestockNotification}>
+              <h2>¿Te avisamos cuando vuelva?</h2>
+              <p>Te enviaremos un correo cuando el talle {selectedSize} esté disponible.</p>
+              <label><span>Correo electrónico</span><input required type="email" maxLength={254} autoComplete="email" value={restockEmail} onChange={(event) => setRestockEntry({ key: restockKey, email: event.target.value })} /></label>
+              <button className="button button--dark" type="submit" disabled={isSubmittingRestock}>{isSubmittingRestock ? 'Registrando…' : 'Avisarme por email'}</button>
+              {restockMessage && <p className="restock-alert__message" role="status">{restockMessage}</p>}
+            </form>
+          )}
+          {!product.isGiftCard && (
+            <form className="shipping-estimator" onSubmit={estimateShipping}>
+              <h2>Calcula el envío</h2>
+              <label><span>Código postal</span><input required inputMode="text" autoComplete="postal-code" minLength={4} maxLength={10} value={postalCode} onChange={(event) => setPostalCode(event.target.value.toUpperCase())} placeholder="Ej. C1000" /></label>
+              <button className="button button--dark" type="submit">Calcular</button>
+              {shippingEstimateError && <p className="shipping-estimator__message" role="alert">{shippingEstimateError}</p>}
+              {shippingEstimate !== null && <p className="shipping-estimator__message" role="status">Estimación para {postalCode}: {shippingEstimate > 0 ? formatPrice(shippingEstimate, currency, usdArsRate) : 'sin cargo'}. Se aplica la tarifa actual de la tienda; la cotización en tiempo real de Correo Argentino estará disponible al configurar sus credenciales de API.</p>}
+              {shippingEstimate === null && <p className="shipping-estimator__hint">La tarifa final se confirma en el checkout. La cotización en tiempo real del transportista requiere credenciales de API.</p>}
+            </form>
           )}
           <button className="button button--coral product-detail__add" type="button" onClick={onAddToCart} disabled={getStockForSize(product, selectedSize) <= 0 || (product.isGiftCard === true && !isValidGiftCardAmount(selectedSize))}>Añadir a la bolsa <ShoppingBag size={17} aria-hidden="true" /></button>
           <p className="product-detail__note">¿Necesitas ayuda para elegir? <button type="button" onClick={onOpenContact}>Escríbenos</button></p>
@@ -414,6 +478,8 @@ const readRecentlyViewed = (): string[] => {
   }
 }
 
+const normalizeSearchText = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es')
+
 function App() {
   const [products, setProducts] = useState<Product[]>(() => initialProducts.map(normalizeProductFacets))
   const showcaseProducts = products.filter((product) => !product.isGiftCard && getProductImage(product, 1))
@@ -611,6 +677,22 @@ function App() {
       if (sortOrder === 'popular') return (second.sold ?? 0) - (first.sold ?? 0) || first.id - second.id
       return first.id - second.id
     })
+  const normalizedQuery = normalizeSearchText(searchQuery.trim())
+  const searchSuggestions = normalizedQuery
+    ? products
+      .filter((product) => {
+        const searchableText = normalizeSearchText(`${product.name} ${product.category} ${product.features.join(' ')}`)
+        return normalizedQuery.split(/\s+/).every((term) =>
+          searchableText.includes(term) || searchableText.split(/\s+/).some((word) => word.startsWith(term)),
+        )
+      })
+      .sort((first, second) => {
+        const firstName = normalizeSearchText(first.name)
+        const secondName = normalizeSearchText(second.name)
+        return Number(!firstName.startsWith(normalizedQuery)) - Number(!secondName.startsWith(normalizedQuery)) || first.id - second.id
+      })
+      .slice(0, 6)
+    : []
   const activeFilterCount = Number(cutFilter !== 'Todas') + Number(audienceFilter !== 'Todos') + Number(genderFilter !== 'Todos')
 
   const cartItems = Object.entries(cart).flatMap(([cartKey, quantity]) => {
@@ -895,7 +977,35 @@ function App() {
           <div className="header-actions">
             <div className={`search-box${isSearchOpen ? ' is-open' : ''}`}>
               <Search className="search-box__icon" size={17} strokeWidth={1.8} aria-hidden="true" />
-              <input type="search" placeholder="Buscar prendas" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); document.getElementById('coleccion')?.scrollIntoView({ behavior: 'smooth' }) }} aria-label="Buscar prendas" />
+              <input
+                type="search"
+                placeholder="Buscar prendas"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && searchSuggestions[0]) {
+                    event.preventDefault()
+                    navigateToProduct(searchSuggestions[0])
+                    setSearchQuery('')
+                    setIsSearchOpen(false)
+                  } else if (event.key === 'Escape') {
+                    setSearchQuery('')
+                  }
+                }}
+                aria-label="Buscar prendas"
+                aria-autocomplete="list"
+                aria-controls="global-search-suggestions"
+                aria-expanded={Boolean(searchQuery.trim())}
+              />
+              {searchQuery.trim() && <div className="search-suggestions" id="global-search-suggestions" role="listbox" aria-label="Sugerencias de productos">
+                {searchSuggestions.length ? searchSuggestions.map((product) => (
+                  <button className="search-suggestion" key={product.id} type="button" role="option" aria-selected="false" onClick={() => { navigateToProduct(product); setSearchQuery(''); setIsSearchOpen(false) }}>
+                    <img src={getProductImage(product)} alt="" />
+                    <span><strong>{product.name}</strong><small>{product.category}</small></span>
+                    <span className="search-suggestion__price">{formatPrice(getSalePrice(product), displayCurrency, usdArsRate)}</span>
+                  </button>
+                )) : <p className="search-suggestions__empty">No encontramos productos con ese nombre.</p>}
+              </div>}
               <button className="search-toggle" type="button" onClick={() => setIsSearchOpen((open) => !open)} aria-label={isSearchOpen ? 'Cerrar búsqueda' : 'Abrir búsqueda'} aria-expanded={isSearchOpen}><Search size={19} strokeWidth={1.8} aria-hidden="true" /></button>
             </div>
             <label className="currency-selector" title={exchangeSource ? `Cotización: ${exchangeSource}` : 'Tipo de cambio USD no disponible'}><select value={displayCurrency} onChange={(event) => toggleDisplayCurrency(event.target.value)} aria-label="Moneda de visualización"><option value="ARS">ARS $</option><option value="USD" disabled={!usdArsRate}>USD $</option></select></label>
@@ -935,6 +1045,7 @@ function App() {
             selectedSize={selectedSizes[activeProduct.id] ?? getDefaultSize(activeProduct)}
             selectedView={selectedProductViews[activeProduct.id] ?? 0}
             currentUser={currentUser}
+            shipping={storeConfig?.shipping ?? null}
             currency={displayCurrency}
             usdArsRate={usdArsRate}
             onBack={() => navigateToProduct(null)}

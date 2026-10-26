@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
-import { apiRequest, type AccountUser, type ShippingDetails, type StoreConfig } from './api'
+import { apiRequest, type AccountUser, type SavedAddress, type ShippingDetails, type StoreConfig } from './api'
 
 export type PaymentMethod = 'mercadopago' | 'transfer'
 export type GuestDetails = { name: string; email: string; phone: string }
@@ -37,6 +37,9 @@ function CheckoutForm({ user, subtotal, digitalOnly, items, shipping, transfer, 
   const [guestEmail, setGuestEmail] = useState('')
   const [acceptTerms, setAcceptTerms] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('mercadopago')
+  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([])
+  const [selectedAddressId, setSelectedAddressId] = useState('')
+  const [addressLoadError, setAddressLoadError] = useState('')
   const canPickup = Boolean(shipping?.pickupAddress)
 
   const isGuest = !user
@@ -44,12 +47,23 @@ function CheckoutForm({ user, subtotal, digitalOnly, items, shipping, transfer, 
   useEffect(() => {
     if (isGuest) return
     let isCurrent = true
-    apiRequest<{ shipping: ShippingDetails | null }>('/api/account/shipping')
-      .then(({ shipping: saved }) => {
-        if (!isCurrent || !saved) return
-        setForm((current) => ({ ...saved, method: saved.method === 'pickup' && !canPickup ? 'delivery' : saved.method, notes: current.notes }))
+    apiRequest<{ addresses: SavedAddress[] }>('/api/account/addresses')
+      .then(({ addresses }) => {
+        if (!isCurrent) return
+        setSavedAddresses(addresses)
+        const preferred = addresses.find((address) => address.isDefault) ?? addresses[0]
+        if (preferred) {
+          setSelectedAddressId(String(preferred.id))
+          setForm((current) => ({ ...current, ...preferred, method: 'delivery' }))
+          return
+        }
+        return apiRequest<{ shipping: ShippingDetails | null }>('/api/account/shipping').then(({ shipping: saved }) => {
+          if (isCurrent && saved) setForm((current) => ({ ...saved, method: saved.method === 'pickup' && !canPickup ? 'delivery' : saved.method, notes: current.notes }))
+        })
       })
-      .catch(() => undefined)
+      .catch((requestError: Error) => {
+        if (isCurrent) setAddressLoadError(requestError.message)
+      })
     return () => { isCurrent = false }
   }, [canPickup, isGuest])
 
@@ -78,7 +92,10 @@ function CheckoutForm({ user, subtotal, digitalOnly, items, shipping, transfer, 
       setCouponMessage(requestError instanceof Error ? requestError.message : 'No se pudo validar el código.')
     }
   }
-  const update = (field: keyof ShippingDetails, value: string) => setForm((current) => ({ ...current, [field]: value }))
+  const update = (field: keyof ShippingDetails, value: string) => {
+    setForm((current) => ({ ...current, [field]: value }))
+    if (['name', 'phone', 'street', 'city', 'province', 'postalCode'].includes(field)) setSelectedAddressId('')
+  }
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     onSubmit({
@@ -110,6 +127,20 @@ function CheckoutForm({ user, subtotal, digitalOnly, items, shipping, transfer, 
           <label><input type="radio" name="method" checked={!isDelivery} onChange={() => update('method', 'pickup')} /> Retiro en persona (sin costo)</label>
         </fieldset>
       )}
+      {isDelivery && !isGuest && savedAddresses.length > 0 && (
+        <label className="checkout-form__saved-address"><span>Dirección guardada</span>
+          <select value={selectedAddressId} onChange={(event) => {
+            const value = event.target.value
+            setSelectedAddressId(value)
+            const address = savedAddresses.find((item) => String(item.id) === value)
+            if (address) setForm((current) => ({ ...current, ...address, method: 'delivery' }))
+          }}>
+            <option value="">Ingresar otra dirección</option>
+            {savedAddresses.map((address) => <option key={address.id} value={address.id}>{address.label}{address.isDefault ? ' · Predeterminada' : ''}</option>)}
+          </select>
+        </label>
+      )}
+      {addressLoadError && !isGuest && <p className="checkout-form__hint" role="status">No se pudieron cargar tus direcciones guardadas: {addressLoadError}</p>}
       {!isDelivery && !digitalOnly && shipping?.pickupAddress && <p className="checkout-form__pickup">Retiras en: {shipping.pickupAddress}. Te avisaremos cuando esté listo.</p>}
       <label><span>{digitalOnly ? 'Tu nombre' : isDelivery ? 'Nombre de quien recibe' : 'Nombre de quien retira'}</span><input required minLength={2} maxLength={80} autoComplete="name" value={form.name} onChange={(event) => update('name', event.target.value)} /></label>
       <label><span>Teléfono de contacto</span><input required type="tel" maxLength={40} autoComplete="tel" value={form.phone} onChange={(event) => update('phone', event.target.value)} /></label>
