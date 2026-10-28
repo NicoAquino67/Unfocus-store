@@ -40,12 +40,13 @@ Pedidos y logística
 [x] Panel admin: pedidos con dirección de entrega y formulario de despacho
 [x] Restaurar stock cuando el admin cancela un pedido manualmente (hoy solo lo hace la cancelación automática)
 [ ] Etiquetas de envío / integración con Correo Argentino (requiere credenciales y acceso a su API)
+[ ] generacion de codigo de regalo
 
 Emails transaccionales
 [x] Pago recibido, pedido despachado, pedido cancelado, recuperación de contraseña, contacto
 [x] Configurar SMTP real (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, CONTACT_FROM_EMAIL) y probar el envío
-[x] Email de pedido creado / bienvenida (opcional)
-
+[x] Email de pedido creado / bienvenida
+[ ] email de confirmacion de compra (envio de codigo si existe)
 [ ]crear mail contacto@unfocus.shop
 
 Legales (Argentina)
@@ -114,8 +115,9 @@ Operación y calidad
 [ ] Accesibilidad: axe-core WCAG 2.2 AA sin violaciones en tienda, ficha, bolsa, checkout, cuenta, legales y admin; falta prueba manual con lector de pantalla/zoom 200 % y Lighthouse de rendimiento
 [ ] Migrar de SQLite a PostgreSQL si crece el volumen
 [ ] Páginas de ayuda / FAQ y chat de soporte
+[ ] mejorar legibilidad de los textos, aumentar en 2 puntos los textos pequeños
 
-- [x] Cancelación automática de pedidos pendientes de pago tras 3 días (PENDING_ORDER_EXPIRY_DAYS)
+[x] Cancelación automática de pedidos pendientes de pago tras 3 días (PENDING_ORDER_EXPIRY_DAYS)
 [x] Descuentos por producto (porcentual o en ARS) sin alterar el precio original
 [x] Galería de imágenes del admin en un único panel
 
@@ -128,6 +130,7 @@ Operación y calidad
 ========================================
 C. CONTROL DE CALIDAD DE LA PÁGINA (consejos de Hostinger)
 ========================================
+
 
 Móvil (puntuación actual entre paréntesis; 0 = crítico, 50 = mejorable, 94 = correcto)
 [ ] Avoid multiple page redirects: evitar redirecciones múltiples (http→https, www→raíz) (0)
