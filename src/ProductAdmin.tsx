@@ -113,11 +113,15 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
   const [trackingDrafts, setTrackingDrafts] = useState<Record<number, { carrier: string; trackingCode: string; trackingUrl: string }>>({})
   const [correoStatus, setCorreoStatus] = useState<{ configured: boolean; missing: string[]; environment: string } | null>(null)
   const [correoBusyId, setCorreoBusyId] = useState<number | null>(null)
+  const [miCorreoStatus, setMiCorreoStatus] = useState<{ configured: boolean; missing: string[]; environment: string } | null>(null)
 
   useEffect(() => {
     let isCurrent = true
     apiRequest<{ configured: boolean; missing: string[]; environment: string }>('/api/admin/correo-argentino/status')
       .then((status) => { if (isCurrent) setCorreoStatus(status) })
+      .catch(() => undefined)
+    apiRequest<{ configured: boolean; missing: string[]; environment: string }>('/api/admin/micorreo/status')
+      .then((status) => { if (isCurrent) setMiCorreoStatus(status) })
       .catch(() => undefined)
     return () => { isCurrent = false }
   }, [])
@@ -279,6 +283,19 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
     }
   }
 
+  const importToMiCorreo = async (orderId: number) => {
+    setCorreoBusyId(orderId)
+    try {
+      await apiRequest<{ ok: true }>(`/api/admin/orders/${orderId}/micorreo/import`, { method: 'POST' })
+      setOrders((current) => current.map((order) => order.id === orderId ? { ...order, miCorreoImported: true } : order))
+      setFormError('')
+    } catch (requestError) {
+      setFormError(requestError instanceof Error ? requestError.message : 'No se pudo importar el pedido a MiCorreo.')
+    } finally {
+      setCorreoBusyId(null)
+    }
+  }
+
   const cancelCorreoShipment = async (orderId: number) => {
     setCorreoBusyId(orderId)
     try {
@@ -421,6 +438,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
           <div className="admin-order-panel">
             <div className="admin-order-panel__header"><p className="eyebrow">Pedidos</p><h3>Estado de operaciones</h3></div>
             {correoStatus && !correoStatus.configured && <p className="admin-form-error" role="status">Correo Argentino sin configurar. Faltan en el .env del servidor: {correoStatus.missing.join(', ')}.</p>}
+            {miCorreoStatus && !miCorreoStatus.configured && <p className="admin-form-error" role="status">MiCorreo sin configurar (el checkout usa la tarifa fija). Faltan en el .env del servidor: {miCorreoStatus.missing.join(', ')}.</p>}
             <div className="admin-order-list">{orders.length ? orders.map((order) => (
               <article key={order.id} className="admin-order-card">
                 <div className="admin-order-card__meta"><strong>{order.reference}</strong><span>{order.userName} · {order.userEmail}</span></div>
@@ -447,6 +465,11 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
                               <button type="button" disabled={correoBusyId === order.id} onClick={() => { void cancelCorreoShipment(order.id) }}>Cancelar envío Correo Argentino</button>
                             </>
                           : <button type="button" disabled={correoBusyId === order.id} onClick={() => { void createCorreoShipment(order.id) }}>Generar envío Correo Argentino</button>
+                      )}
+                      {order.shipping.method === 'delivery' && miCorreoStatus?.configured && !order.correoArgentino && (
+                        order.miCorreoImported
+                          ? <span>Importado a MiCorreo: despáchalo desde el portal y pega acá el seguimiento.</span>
+                          : <button type="button" disabled={correoBusyId === order.id} onClick={() => { void importToMiCorreo(order.id) }}>Importar a MiCorreo</button>
                       )}
                       <input placeholder="Transporte (Andreani, Correo…)" value={trackingDrafts[order.id]?.carrier ?? order.carrier} onChange={(event) => updateTracking(order.id, 'carrier', event.target.value)} />
                       <input placeholder="Código de seguimiento" value={trackingDrafts[order.id]?.trackingCode ?? order.trackingCode} onChange={(event) => updateTracking(order.id, 'trackingCode', event.target.value)} />

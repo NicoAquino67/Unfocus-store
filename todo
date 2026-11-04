@@ -16,6 +16,29 @@ Leyenda: [x] hecho · [~] hecho en código, requiere acción tuya · [ ] pendien
 [ ] 9. (Opcional, lo dejé sin hacer) Envío a sucursal/locker: el endpoint GET /api/admin/correo-argentino/agencies ya existe, falta el selector de sucursal en el checkout.
 
 ========================================
+>>> ACCIONES TUYAS: MICORREO (cotización de envío en el checkout) <<<
+========================================
+[ ] M1. Pedir a Correo Argentino las credenciales de la API MiCorreo (usuario y contraseña de API) para TEST y para PRODUCCIÓN.
+[ ] M2. Tener un usuario MiCorreo (empresa con CUIT) y obtener su customerId con POST /users/validate (email + contraseña de MiCorreo).
+[ ] M3. En .env completar: MICORREO_USER, MICORREO_PASSWORD, MICORREO_CUSTOMER_ID y MICORREO_ORIGIN_POSTAL_CODE (CP de 4 dígitos desde donde despachas). Dejar MICORREO_ENVIRONMENT=test mientras pruebes.
+[ ] M4. Los datos del remitente (CORREO_SENDER_*) y el paquete (CORREO_PARCEL_*) se comparten con Paq.ar: completarlos si no lo hiciste (peso/medidas de UNA prenda; el checkout las apila por cantidad).
+[ ] M5. Reiniciar el servidor. Debe decir "MiCorreo activo (test)". En el checkout, al escribir el código postal aparece "Correo Argentino Clásico" con precio y plazo.
+[ ] M6. Probar en TEST: pedido con envío a domicilio → marcar Pagado → "Importar a MiCorreo" en admin → despacharlo desde el portal MiCorreo → pegar el código de seguimiento y "Marcar como enviado".
+[ ] M7. Producción: cargar credenciales de PRODUCCIÓN en las variables del hosting y MICORREO_ENVIRONMENT=production (las variables NO van al repositorio).
+[ ] M8. Decidir si usás MiCorreo (cotiza e importa; el despacho/rótulo se hace en el portal) o Paq.ar (genera rótulo y cancela por API, requiere contrato). Pueden convivir: si el pedido se generó con Paq.ar, no se ofrece importarlo a MiCorreo.
+
+========================================
+MICORREO · IMPLEMENTADO EN CÓDIGO (rama dev)
+========================================
+[x] Cliente API MiCorreo (server/miCorreo.mjs): token JWT con caché (Basic auth), tarifas, sucursales, importar envío, seguimiento
+[x] Cotización en vivo en el checkout: POST /api/shipping/quote (con límite de uso) y selector de modalidad con precio y plazo
+[x] El servidor vuelve a cotizar al crear el pedido (el cliente no define el precio) y respeta "envío gratis desde"; si MiCorreo no responde usa la tarifa fija
+[x] Admin: botón "Importar a MiCorreo" (POST /api/admin/orders/:id/micorreo/import), estado y seguimiento (/micorreo/tracking), aviso de variables faltantes
+[x] Validaciones locales (peso/medidas máximos, provincia, email) y manejo de errores inconsistentes de la API
+[x] Variables en .env.example y tests automáticos (npm test)
+[ ] (Opcional) Envío a sucursal: GET /api/admin/micorreo/agencies ya existe, falta el selector en el checkout.
+
+========================================
 CORREO ARGENTINO · IMPLEMENTADO EN CÓDIGO (rama dev)
 ========================================
 [x] Cliente de la API Paq.ar v1 (server/correoArgentino.mjs): autenticación Apikey + agreement, test/producción

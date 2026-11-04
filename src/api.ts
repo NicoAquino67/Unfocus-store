@@ -26,6 +26,16 @@ export type ShippingDetails = {
   province: string
   postalCode: string
   notes: string
+  rateType?: string
+}
+
+export type ShippingRate = {
+  deliveredType: string
+  productType: string
+  productName: string
+  priceArs: number
+  deliveryTimeMin: string | null
+  deliveryTimeMax: string | null
 }
 
 export type TransferDetails = { holder: string; bank: string; cbu: string; alias: string; taxId: string }
@@ -48,6 +58,7 @@ export type AccountOrder = {
   trackingUrl: string
   shippedAt: string | null
   correoArgentino?: boolean
+  miCorreoImported?: boolean
   items: AccountOrderItem[]
   couponCode?: string
   discountArs?: number

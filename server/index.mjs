@@ -7,6 +7,7 @@ import express from 'express'
 import { MercadoPagoConfig, Preference } from 'mercadopago'
 import nodemailer from 'nodemailer'
 import { CorreoArgentinoError, buildOrderPayload, createCorreoArgentinoClient, readCorreoArgentinoConfig } from './correoArgentino.mjs'
+import { MiCorreoError, buildDimensions, buildImportPayload, createMiCorreoClient, readMiCorreoConfig } from './miCorreo.mjs'
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url))
 const projectDirectory = path.resolve(serverDirectory, '..')
@@ -161,6 +162,7 @@ const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().m
     tracking_url: 'TEXT',
     shipped_at: 'TEXT',
     ca_tracking_number: 'TEXT',
+    mc_imported_at: 'TEXT',
     payment_method: "TEXT NOT NULL DEFAULT 'mercadopago'",
     coupon_code: "TEXT NOT NULL DEFAULT ''",
     discount_ars: 'INTEGER NOT NULL DEFAULT 0',
@@ -919,6 +921,7 @@ const serializeOrder = (order, extra = {}) => ({
   trackingUrl: order.tracking_url ?? '',
   shippedAt: order.shipped_at ?? null,
   correoArgentino: Boolean(order.ca_tracking_number),
+  miCorreoImported: Boolean(order.mc_imported_at),
   items: database.prepare('SELECT product_name AS name, product_slug AS slug, image_url AS image, size, quantity, unit_price_ars AS unitPriceArs FROM order_items WHERE order_id = ?').all(order.id),
   ...extra,
 })
@@ -1009,12 +1012,14 @@ const buildOrderFromItems = (items, userId) => {
   return { orderItems, total, eligibleSubtotal, reference, userId }
 }
 
-const createOrderRecord = (request, items, shipping, { notify = true, paymentMethod = 'mercadopago' } = {}) => {
+const createOrderRecord = (request, items, shipping, { notify = true, paymentMethod = 'mercadopago', quotedShippingArs } = {}) => {
   const { orderItems, total: subtotal, eligibleSubtotal, reference, userId } = buildOrderFromItems(items, request.user.id)
   const digitalOnly = orderItems.every((item) => item.product.isGiftCard)
   const shippingDetails = digitalOnly
     ? { method: 'digital', name: cleanText(shipping?.name, 80) || request.user.name, phone: cleanText(shipping?.phone, 40), street: '', city: '', province: '', postalCode: '', notes: '', costArs: 0 }
     : parseShippingDetails(shipping, subtotal)
+  const freeShipping = storeSettings.freeShippingThresholdArs > 0 && subtotal >= storeSettings.freeShippingThresholdArs
+  if (quotedShippingArs !== undefined && shippingDetails.method === 'delivery' && !freeShipping) shippingDetails.costArs = quotedShippingArs
   const { coupon, discount } = request.body?.couponCode ? evaluateCoupon(request.body.couponCode, eligibleSubtotal) : { coupon: null, discount: 0 }
   const payable = subtotal - discount + shippingDetails.costArs
   let giftCard = null
@@ -1198,12 +1203,13 @@ app.delete('/api/admin/coupons/:id', requireAdmin, (request, response) => {
   response.json({ coupons: database.prepare(`${couponSelect} ORDER BY id DESC`).all() })
 })
 
-app.post('/api/orders', resolveCheckoutUser, (request, response) => {
+app.post('/api/orders', resolveCheckoutUser, async (request, response) => {
   try {
     if (request.body.paymentMethod !== 'transfer') throw new Error('Elige un medio de pago válido.')
     if (request.body.acceptTerms !== true) throw new Error('Debes aceptar los términos y condiciones para continuar.')
     if (!transferDetails()) throw new Error('Las transferencias no están disponibles por el momento.')
-    const result = createOrderRecord(request, request.body.items, request.body.shipping, { paymentMethod: 'transfer' })
+    const quotedShippingArs = await resolveQuotedShipping(request)
+    const result = createOrderRecord(request, request.body.items, request.body.shipping, { paymentMethod: 'transfer', quotedShippingArs })
     result.order.paymentMethod = 'transfer'
     if (result.order.totalArs <= 0) {
       markOrderPaidWithoutCharge(result.order, request.user.id)
@@ -1475,6 +1481,89 @@ app.post('/api/admin/orders/:id/correo-argentino/cancel', requireAdmin, correoAr
   response.json({ ok: true })
 }))
 
+const miCorreoConfig = readMiCorreoConfig()
+const miCorreo = createMiCorreoClient(miCorreoConfig)
+const miCorreoActive = miCorreoConfig.missing.length === 0
+
+const miCorreoRoute = (handler) => async (request, response) => {
+  try {
+    await handler(request, response)
+  } catch (error) {
+    if (!(error instanceof MiCorreoError)) throw error
+    response.status(error.status).json({ error: error.message })
+  }
+}
+
+const physicalQuantity = (items, userId) => buildOrderFromItems(items, userId).orderItems.reduce((sum, item) => sum + (item.product.isGiftCard ? 0 : item.quantity), 0)
+
+const quoteDelivery = async (items, postalCode, userId) => {
+  const quantity = physicalQuantity(items, userId)
+  if (!quantity) return []
+  return miCorreo.getRates({ postalCodeDestination: postalCode, dimensions: buildDimensions(miCorreoConfig, quantity), deliveredType: 'D' })
+}
+
+// Devuelve el costo cotizado por MiCorreo (o undefined para usar la tarifa fija de la tienda).
+const resolveQuotedShipping = async (request) => {
+  const shipping = request.body?.shipping
+  if (!miCorreoActive || shipping?.method !== 'delivery') return undefined
+  let rates
+  try {
+    rates = await quoteDelivery(request.body.items, shipping.postalCode, request.user.id)
+  } catch (error) {
+    if (error instanceof MiCorreoError && error.status >= 500) return undefined
+    throw error
+  }
+  if (!rates.length) return undefined
+  const productType = typeof shipping.rateType === 'string' ? shipping.rateType : 'CP'
+  const rate = rates.find((candidate) => candidate.productType === productType)
+  if (!rate) throw new Error('La modalidad de envío elegida ya no está disponible. Vuelve a elegirla.')
+  return rate.priceArs
+}
+
+app.post('/api/shipping/quote', applyRateLimit, miCorreoRoute(async (request, response) => {
+  if (!miCorreoActive) return response.json({ available: false, rates: [] })
+  try {
+    const rates = await quoteDelivery(request.body?.items, request.body?.postalCode, null)
+    response.json({ available: rates.length > 0, rates })
+  } catch (error) {
+    if (error instanceof MiCorreoError && error.status < 500) throw error
+    if (error instanceof MiCorreoError) return response.json({ available: false, rates: [] })
+    response.status(400).json({ error: 'Revisa los productos del pedido para cotizar el envío.' })
+  }
+}))
+
+app.get('/api/admin/micorreo/status', requireAdmin, miCorreoRoute(async (request, response) => {
+  let credentialsValid = null
+  if (miCorreoActive && request.query.check === '1') {
+    try { credentialsValid = await miCorreo.validateCredentials() } catch { credentialsValid = false }
+  }
+  response.json({ configured: miCorreoActive, missing: miCorreoConfig.missing, environment: miCorreoConfig.environment, credentialsValid })
+}))
+
+app.get('/api/admin/micorreo/agencies', requireAdmin, miCorreoRoute(async (request, response) => {
+  const provinceCode = typeof request.query.provinceCode === 'string' ? request.query.provinceCode.slice(0, 2).toUpperCase() : undefined
+  response.json({ agencies: await miCorreo.getAgencies({ provinceCode }) })
+}))
+
+app.post('/api/admin/orders/:id/micorreo/import', requireAdmin, miCorreoRoute(async (request, response) => {
+  const order = loadCorreoArgentinoOrder(request)
+  if (order.status !== 'paid') throw new MiCorreoError('Solo se puede importar a MiCorreo un pedido pagado.', 400)
+  if (order.shipping_method !== 'delivery') throw new MiCorreoError('El pedido no es un envío a domicilio.', 400)
+  if (order.mc_imported_at) throw new MiCorreoError('El pedido ya fue importado a MiCorreo.', 400)
+  const quantity = database.prepare('SELECT COALESCE(SUM(quantity), 0) AS quantity FROM order_items WHERE order_id = ?').get(order.id).quantity
+  const payload = buildImportPayload(order, { sender: correoArgentinoConfig.sender, dimensions: buildDimensions(miCorreoConfig, quantity || 1) })
+  await miCorreo.importShipping(payload)
+  database.prepare("UPDATE orders SET mc_imported_at = datetime('now') WHERE id = ?").run(order.id)
+  response.json({ ok: true })
+}))
+
+// shippingId = código de seguimiento que MiCorreo asigna al despachar; se carga en el pedido al marcarlo como enviado.
+app.get('/api/admin/orders/:id/micorreo/tracking', requireAdmin, miCorreoRoute(async (request, response) => {
+  const order = loadCorreoArgentinoOrder(request)
+  if (!order.tracking_code) throw new MiCorreoError('El pedido todavía no tiene código de seguimiento.', 400)
+  response.json(await miCorreo.getTracking(order.tracking_code))
+}))
+
 app.get('/api/products/:slug/reviews', (request, response) => {
   const product = selectProductBySlug.get(request.params.slug)
   if (!product) return response.status(404).json({ error: 'Producto no encontrado.' })
@@ -1511,7 +1600,8 @@ app.post('/api/payments/create-preference', resolveCheckoutUser, async (request,
   let order
   try {
     if (request.body.acceptTerms !== true) throw new Error('Debes aceptar los términos y condiciones para continuar.')
-    order = createOrderRecord(request, request.body.items, request.body.shipping, { notify: false })
+    const quotedShippingArs = await resolveQuotedShipping(request)
+    order = createOrderRecord(request, request.body.items, request.body.shipping, { notify: false, quotedShippingArs })
     if (order.order.totalArs <= 0) {
       markOrderPaidWithoutCharge(order.order, request.user.id)
       return response.json({ order: order.order, paymentUrl: null, initPoint: null })
@@ -1662,6 +1752,8 @@ console.log(`SQLite database: ${databasePath}`)
 if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) console.log('No admin bootstrap configured. Set ADMIN_EMAIL and ADMIN_PASSWORD in .env to create/promote an administrator.')
 if (correoArgentinoConfig.missing.length) console.log(`Correo Argentino desactivado. Faltan en .env: ${correoArgentinoConfig.missing.join(', ')}`)
 else console.log(`Correo Argentino activo (${correoArgentinoConfig.environment}).`)
+if (miCorreoActive) console.log(`MiCorreo activo (${miCorreoConfig.environment}): cotización de envío en el checkout.`)
+else console.log(`MiCorreo desactivado (se usa la tarifa fija). Faltan en .env: ${miCorreoConfig.missing.join(', ')}`)
 
 const shutdown = () => {
   database.close()
