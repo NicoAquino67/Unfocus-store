@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowLeft, Check, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import AdminCoupons from './AdminCoupons'
 import AdminGiftCards from './AdminGiftCards'
-import { apiRequest, type AdminOrder, type AdminSummary, type ContactMessage, type NewsletterSubscriber, type OrderStatus, type StoreSettings } from './api'
+import { apiRequest, type AdminOrder, type AdminReport, type AdminSummary, type ContactMessage, type NewsletterSubscriber, type OrderStatus, type StoreSettings } from './api'
 import { formatPrice, getSalePrice, hasDiscount, getProductFacets, getProductImage, garmentCuts, productAudiences, productGenders, productFacetTag, sizes, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
 import './ProductAdmin.css'
 
@@ -11,6 +11,11 @@ type ProductDraft = {
   slug: string
   name: string
   price: string
+  garmentCostArs: string
+  logisticsCostArs: string
+  productionCostArs: string
+  taxPercent: string
+  profitPercent: string
   stockBySize: Record<string, number>
   composition: string
   cut: GarmentCut
@@ -32,12 +37,27 @@ type ProductAdminProps = {
 
 const minProductImages = 3
 const maxProductImages = 10
+const priceRoundingStep = 1000
+
+const calculateSuggestedPrice = (draft: ProductDraft) => {
+  const totalCost = Number(draft.garmentCostArs) + Number(draft.logisticsCostArs) + Number(draft.productionCostArs)
+  const taxRate = Number(draft.taxPercent)
+  const profitRate = Number(draft.profitPercent)
+  if (totalCost <= 0 || !Number.isFinite(taxRate) || taxRate < 0 || taxRate >= 100 || !Number.isFinite(profitRate) || profitRate < 0) return 0
+  const beforeRounding = totalCost * (1 + profitRate / 100) / (1 - taxRate / 100)
+  return Math.ceil(beforeRounding / priceRoundingStep) * priceRoundingStep
+}
 
 const emptyDraft = (): ProductDraft => ({
   id: null,
   slug: '',
   name: '',
   price: '',
+  garmentCostArs: '0',
+  logisticsCostArs: '0',
+  productionCostArs: '0',
+  taxPercent: '0',
+  profitPercent: '0',
   stockBySize: Object.fromEntries(sizes.map((size) => [size, 0])),
   composition: '',
   cut: 'Regular fit',
@@ -57,6 +77,11 @@ const productToDraft = (product: Product): ProductDraft => {
     slug: product.slug,
     name: product.name,
     price: String(product.price),
+    garmentCostArs: String(product.garmentCostArs ?? 0),
+    logisticsCostArs: String(product.logisticsCostArs ?? 0),
+    productionCostArs: String(product.productionCostArs ?? 0),
+    taxPercent: String(product.taxPercent ?? 0),
+    profitPercent: String(product.profitPercent ?? 0),
     stockBySize: Object.fromEntries(sizes.map((size) => [size, Number(product.stockBySize?.[size] ?? 0)])),
     composition: product.composition,
     cut: facets.cut,
@@ -90,7 +115,7 @@ const optimizeImage = async (file: File) => {
   context.fillStyle = '#eef1ef'
   context.fillRect(0, 0, canvas.width, canvas.height)
   context.drawImage(image, 0, 0, canvas.width, canvas.height)
-  return canvas.toDataURL('image/jpeg', 0.82)
+  return canvas.toDataURL('image/webp', 0.82)
 }
 
 const createSlug = (value: string) =>
@@ -99,6 +124,8 @@ const createSlug = (value: string) =>
 function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps) {
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState<ProductDraft | null>(null)
+  const [adminProducts, setAdminProducts] = useState<Product[]>([])
+  const [adminProductsLoaded, setAdminProductsLoaded] = useState(false)
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null)
   const [processingImage, setProcessingImage] = useState(false)
   const [formError, setFormError] = useState('')
@@ -111,6 +138,42 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
   const [settings, setSettings] = useState<StoreSettings | null>(null)
   const [settingsMessage, setSettingsMessage] = useState('')
   const [trackingDrafts, setTrackingDrafts] = useState<Record<number, { carrier: string; trackingCode: string; trackingUrl: string }>>({})
+  const [correoStatus, setCorreoStatus] = useState<{ configured: boolean; missing: string[]; environment: string } | null>(null)
+  const [correoBusyId, setCorreoBusyId] = useState<number | null>(null)
+  const [miCorreoStatus, setMiCorreoStatus] = useState<{ configured: boolean; missing: string[]; environment: string } | null>(null)
+  const [reportDays, setReportDays] = useState(30)
+  const [report, setReport] = useState<AdminReport | null>(null)
+
+  useEffect(() => {
+    let isCurrent = true
+    apiRequest<{ products: Product[] }>('/api/admin/products')
+      .then(({ products: adminProductList }) => {
+        if (!isCurrent) return
+        setAdminProducts(adminProductList)
+        setAdminProductsLoaded(true)
+      })
+      .catch((requestError) => { if (isCurrent) setFormError(requestError instanceof Error ? requestError.message : 'No se pudieron cargar los costos de los productos.') })
+    return () => { isCurrent = false }
+  }, [])
+
+  useEffect(() => {
+    let isCurrent = true
+    apiRequest<AdminReport>(`/api/admin/reports?days=${reportDays}`)
+      .then((result) => { if (isCurrent) setReport(result) })
+      .catch(() => undefined)
+    return () => { isCurrent = false }
+  }, [reportDays])
+
+  useEffect(() => {
+    let isCurrent = true
+    apiRequest<{ configured: boolean; missing: string[]; environment: string }>('/api/admin/correo-argentino/status')
+      .then((status) => { if (isCurrent) setCorreoStatus(status) })
+      .catch(() => undefined)
+    apiRequest<{ configured: boolean; missing: string[]; environment: string }>('/api/admin/micorreo/status')
+      .then((status) => { if (isCurrent) setMiCorreoStatus(status) })
+      .catch(() => undefined)
+    return () => { isCurrent = false }
+  }, [])
 
   useEffect(() => {
     let isCurrent = true
@@ -137,6 +200,15 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
     `${product.name} ${product.description}`.toLocaleLowerCase('es').includes(query.toLocaleLowerCase('es').trim()),
   )
   const inventoryValue = products.reduce((total, product) => total + getSalePrice(product), 0)
+
+  const updatePricingField = (field: 'garmentCostArs' | 'logisticsCostArs' | 'productionCostArs' | 'taxPercent' | 'profitPercent', value: string) => {
+    setDraft((current) => {
+      if (!current) return current
+      const updated = { ...current, [field]: value }
+      const suggestedPrice = calculateSuggestedPrice(updated)
+      return suggestedPrice > 0 ? { ...updated, price: String(suggestedPrice) } : updated
+    })
+  }
 
   const handleImages = async (files: File[], replaceIndex?: number) => {
     if (!files.length) return
@@ -180,6 +252,11 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
       name,
       category: existingProduct?.category ?? 'Camisetas',
       price: Number(draft.price),
+      garmentCostArs: Number(draft.garmentCostArs),
+      logisticsCostArs: Number(draft.logisticsCostArs),
+      productionCostArs: Number(draft.productionCostArs),
+      taxPercent: Number(draft.taxPercent),
+      profitPercent: Number(draft.profitPercent),
       discountType: draft.discountType,
       discountValue: draft.discountType === 'none' ? 0 : Number(draft.discountValue),
       alt: `Camiseta UnFocus ${name}`,
@@ -203,6 +280,9 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
     setIsSaving(true)
     try {
       await onSave(product)
+      setAdminProducts((current) => current.some((item) => item.id === product.id)
+        ? current.map((item) => item.id === product.id ? product : item)
+        : [...current, product])
       setDraft(null)
       setFormError('')
     } catch (requestError) {
@@ -216,6 +296,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
     setFormError('')
     try {
       await onDelete(productId)
+      setAdminProducts((current) => current.filter((product) => product.id !== productId))
       setPendingDeleteId(null)
     } catch (requestError) {
       setFormError(requestError instanceof Error ? requestError.message : 'No se pudo eliminar el producto.')
@@ -252,6 +333,47 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
       setFormError('')
     } catch (requestError) {
       setFormError(requestError instanceof Error ? requestError.message : 'No se pudo actualizar el estado del pedido.')
+    }
+  }
+
+  const createCorreoShipment = async (orderId: number) => {
+    setCorreoBusyId(orderId)
+    try {
+      const result = await apiRequest<{ carrier: string; trackingCode: string; trackingUrl: string }>(`/api/admin/orders/${orderId}/correo-argentino`, { method: 'POST' })
+      setOrders((current) => current.map((order) => order.id === orderId ? { ...order, ...result, correoArgentino: true } : order))
+      setTrackingDrafts((current) => ({ ...current, [orderId]: result }))
+      setFormError('')
+    } catch (requestError) {
+      setFormError(requestError instanceof Error ? requestError.message : 'No se pudo generar el envío.')
+    } finally {
+      setCorreoBusyId(null)
+    }
+  }
+
+  const importToMiCorreo = async (orderId: number) => {
+    setCorreoBusyId(orderId)
+    try {
+      await apiRequest<{ ok: true }>(`/api/admin/orders/${orderId}/micorreo/import`, { method: 'POST' })
+      setOrders((current) => current.map((order) => order.id === orderId ? { ...order, miCorreoImported: true } : order))
+      setFormError('')
+    } catch (requestError) {
+      setFormError(requestError instanceof Error ? requestError.message : 'No se pudo importar el pedido a MiCorreo.')
+    } finally {
+      setCorreoBusyId(null)
+    }
+  }
+
+  const cancelCorreoShipment = async (orderId: number) => {
+    setCorreoBusyId(orderId)
+    try {
+      await apiRequest<{ ok: true }>(`/api/admin/orders/${orderId}/correo-argentino/cancel`, { method: 'POST' })
+      setOrders((current) => current.map((order) => order.id === orderId ? { ...order, correoArgentino: false, carrier: '', trackingCode: '', trackingUrl: '' } : order))
+      setTrackingDrafts((current) => ({ ...current, [orderId]: { carrier: '', trackingCode: '', trackingUrl: '' } }))
+      setFormError('')
+    } catch (requestError) {
+      setFormError(requestError instanceof Error ? requestError.message : 'No se pudo cancelar el envío.')
+    } finally {
+      setCorreoBusyId(null)
     }
   }
 
@@ -307,13 +429,58 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
         </section>
       )}
 
+      {!draft && report && (
+        <section className="admin-reports" aria-labelledby="reports-title">
+          <div className="admin-reports__heading">
+            <h2 id="reports-title">Reportes</h2>
+            <label>Período <select value={reportDays} onChange={(event) => setReportDays(Number(event.target.value))}><option value={7}>7 días</option><option value={30}>30 días</option><option value={90}>90 días</option></select></label>
+          </div>
+          <div className="admin-summary-grid">
+            <div className="admin-card"><span>Pedidos pagados</span><strong>{report.orders}</strong></div>
+            <div className="admin-card"><span>Ingresos</span><strong>{formatPrice(report.revenue)}</strong></div>
+            <div className="admin-card"><span>Ticket promedio</span><strong>{formatPrice(report.averageOrder)}</strong></div>
+          </div>
+          <div className="admin-reports__tables">
+            <div>
+              <h3>Más vendidos</h3>
+              {report.topProducts.length === 0 ? <p>Sin ventas en el período.</p> : <ul>{report.topProducts.map((item) => <li key={item.name}><span>{item.name}</span><strong>{item.units} u. · {formatPrice(item.revenue)}</strong></li>)}</ul>}
+            </div>
+            <div>
+              <h3>Stock bajo (≤ {report.lowStockThreshold} u.)</h3>
+              {report.lowStock.length === 0 ? <p>Todo el stock está por encima del mínimo.</p> : <ul>{report.lowStock.map((item) => <li key={`${item.productId}-${item.size}`}><span>{item.name} · talle {item.size}</span><strong>{item.stock === 0 ? 'Agotado' : `${item.stock} u.`}</strong></li>)}</ul>}
+            </div>
+            <div>
+              <h3>Ventas por día</h3>
+              {report.daily.length === 0 ? <p>Sin ventas en el período.</p> : <ul>{report.daily.map((item) => <li key={item.day}><span>{item.day}</span><strong>{item.orders} ped. · {formatPrice(item.revenue)}</strong></li>)}</ul>}
+            </div>
+          </div>
+        </section>
+      )}
+
       {draft ? (
         <form className="admin-editor" onSubmit={saveDraft}>
           <div className="admin-editor__heading"><div><p className="eyebrow">Catálogo</p><h2>{draft.id === null ? 'Añadir producto' : 'Editar producto'}</h2></div><button className="admin-icon-button" type="button" onClick={() => { setDraft(null); setFormError('') }} aria-label="Cerrar editor" title="Cerrar editor"><X size={18} /></button></div>
 
           <div className="admin-form-grid">
             <label className="admin-field"><span>Nombre del producto</span><input autoFocus required maxLength={80} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Ej. Mind Unfiltered" /></label>
-            <label className="admin-field"><span>Precio (ARS)</span><input required type="number" min="1" step="1" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} placeholder="45900" /></label>
+            <label className="admin-field"><span>Precio final (ARS) · editable</span><input required type="number" min="1" step="1" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} placeholder="Se calcula con los costos" /></label>
+            <div className="admin-cost-panel admin-field--wide">
+              <h3>Costos y precio sugerido</h3>
+              <div className="admin-cost-grid">
+                <label className="admin-field"><span>Remera (ARS)</span><input type="number" min="0" step="1" value={draft.garmentCostArs} onChange={(event) => updatePricingField('garmentCostArs', event.target.value)} /></label>
+                <label className="admin-field"><span>Logística (ARS)</span><input type="number" min="0" step="1" value={draft.logisticsCostArs} onChange={(event) => updatePricingField('logisticsCostArs', event.target.value)} /></label>
+                <label className="admin-field"><span>Producción (ARS)</span><input type="number" min="0" step="1" value={draft.productionCostArs} onChange={(event) => updatePricingField('productionCostArs', event.target.value)} /></label>
+                <label className="admin-field"><span>Impuestos y cargos sobre venta (%)</span><input type="number" min="0" max="99.99" step="0.01" value={draft.taxPercent} onChange={(event) => updatePricingField('taxPercent', event.target.value)} /></label>
+                <label className="admin-field"><span>Ganancia sobre costo (%)</span><input type="number" min="0" max="1000" step="0.1" value={draft.profitPercent} onChange={(event) => updatePricingField('profitPercent', event.target.value)} /></label>
+              </div>
+              <p className="admin-cost-panel__note">El monotributo nacional es una cuota fija, no un porcentaje por producto. Ingresos Brutos y cargos locales dependen de tu jurisdicción; ingresá aquí la tasa efectiva que corresponda. <a href="https://www.arca.gob.ar/monotributo/ayuda/que-es.asp" target="_blank" rel="noreferrer">Información oficial de ARCA</a>.</p>
+              <p className="admin-cost-panel__summary" aria-live="polite">
+                Costos totales: <strong>{formatPrice(Number(draft.garmentCostArs) + Number(draft.logisticsCostArs) + Number(draft.productionCostArs))}</strong>
+                {' · '}Precio sugerido: <strong>{calculateSuggestedPrice(draft) > 0 ? formatPrice(calculateSuggestedPrice(draft)) : 'Completa los costos'}</strong>
+                {' · '}Redondeado hacia arriba al próximo {formatPrice(priceRoundingStep)}.
+                {' '}La sugerencia se actualiza al cambiar los costos o porcentajes; el precio final se puede ajustar manualmente.
+              </p>
+            </div>
             <label className="admin-field"><span>Composición</span><input required maxLength={100} value={draft.composition} onChange={(event) => setDraft({ ...draft, composition: event.target.value })} placeholder="100% algodón" /></label>
             <label className="admin-field"><span>Corte y calce</span><select value={draft.cut} onChange={(event) => setDraft({ ...draft, cut: event.target.value as GarmentCut })}>{garmentCuts.map((cut) => <option key={cut} value={cut}>{cut}</option>)}</select></label>
             <label className="admin-field"><span>Público por edad</span><select value={draft.audience} onChange={(event) => setDraft({ ...draft, audience: event.target.value as ProductAudience })}>{productAudiences.map((audience) => <option key={audience} value={audience}>{audience}</option>)}</select></label>
@@ -345,7 +512,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
                 const label = index === 0 ? 'Frente' : index === 1 ? 'Espalda' : `Imagen ${index + 1}`
                 return (
                   <li className="admin-gallery__item" key={`${index}-${image.slice(-24)}`}>
-                    <img src={image} alt={`Vista previa: ${label}`} />
+                    <img src={image} alt={`Vista previa: ${label}`} width="112" height="128" />
                     <span className="admin-gallery__name">{label}</span>
                     <span className="admin-gallery__actions">
                       <label className="admin-gallery__button"><ImagePlus size={15} aria-hidden="true" /><span className="visually-hidden">Cambiar {label}</span><input className="visually-hidden" type="file" accept="image/*" disabled={processingImage} onChange={(event) => { void handleImages(Array.from(event.currentTarget.files ?? []), index); event.currentTarget.value = '' }} /></label>
@@ -371,10 +538,10 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
           <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th scope="col">Producto</th><th scope="col">Composición</th><th scope="col">Precio</th><th scope="col">Acciones</th></tr></thead><tbody>
             {filteredProducts.map((product) => (
               <tr key={product.id}>
-                <td><div className="admin-product-cell"><img src={getProductImage(product)} alt="" /><div><strong>{product.name}</strong><span>{product.category} · {product.gallery?.length ?? 0} vistas</span></div></div></td>
+                <td><div className="admin-product-cell"><img src={getProductImage(product)} alt="" width="55" height="64" /><div><strong>{product.name}</strong><span>{product.category} · {product.gallery?.length ?? 0} vistas</span></div></div></td>
                 <td>{product.composition}</td>
                 <td>{hasDiscount(product) ? <><s>{formatPrice(product.price)}</s> <strong>{formatPrice(getSalePrice(product))}</strong></> : formatPrice(product.price)}</td>
-                <td><div className="admin-row-actions">{pendingDeleteId === product.id ? <><span className="admin-confirm-label">¿Eliminar?</span><button className="admin-icon-button admin-icon-button--danger" type="button" onClick={() => { void confirmDelete(product.id) }} aria-label={`Confirmar eliminación de ${product.name}`} title="Confirmar eliminación"><Check size={16} /></button><button className="admin-icon-button" type="button" onClick={() => setPendingDeleteId(null)} aria-label="Cancelar eliminación" title="Cancelar"><X size={16} /></button></> : <><button className="admin-icon-button" type="button" onClick={() => { setDraft(productToDraft(product)); setFormError('') }} aria-label={`Editar ${product.name}`} title="Editar"><Pencil size={16} /></button><button className="admin-icon-button admin-icon-button--danger" type="button" onClick={() => setPendingDeleteId(product.id)} aria-label={`Eliminar ${product.name}`} title="Eliminar"><Trash2 size={16} /></button></>}</div></td>
+                <td><div className="admin-row-actions">{pendingDeleteId === product.id ? <><span className="admin-confirm-label">¿Eliminar?</span><button className="admin-icon-button admin-icon-button--danger" type="button" onClick={() => { void confirmDelete(product.id) }} aria-label={`Confirmar eliminación de ${product.name}`} title="Confirmar eliminación"><Check size={16} /></button><button className="admin-icon-button" type="button" onClick={() => setPendingDeleteId(null)} aria-label="Cancelar eliminación" title="Cancelar"><X size={16} /></button></> : <><button className="admin-icon-button" type="button" disabled={!adminProductsLoaded} onClick={() => { const adminProduct = adminProducts.find((item) => item.id === product.id); setDraft(productToDraft(adminProduct ?? product)); setFormError('') }} aria-label={`Editar ${product.name}`} title="Editar"><Pencil size={16} /></button><button className="admin-icon-button admin-icon-button--danger" type="button" onClick={() => setPendingDeleteId(product.id)} aria-label={`Eliminar ${product.name}`} title="Eliminar"><Trash2 size={16} /></button></>}</div></td>
               </tr>
             ))}
             {filteredProducts.length === 0 && <tr><td className="admin-empty" colSpan={4}>No hay productos que coincidan con la búsqueda.</td></tr>}
@@ -382,6 +549,8 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
 
           <div className="admin-order-panel">
             <div className="admin-order-panel__header"><p className="eyebrow">Pedidos</p><h3>Estado de operaciones</h3></div>
+            {correoStatus && !correoStatus.configured && <p className="admin-form-error" role="status">Correo Argentino sin configurar. Faltan en el .env del servidor: {correoStatus.missing.join(', ')}.</p>}
+            {miCorreoStatus && !miCorreoStatus.configured && <p className="admin-form-error" role="status">MiCorreo sin configurar (el checkout usa la tarifa fija). Faltan en el .env del servidor: {miCorreoStatus.missing.join(', ')}.</p>}
             <div className="admin-order-list">{orders.length ? orders.map((order) => (
               <article key={order.id} className="admin-order-card">
                 <div className="admin-order-card__meta"><strong>{order.reference}</strong><span>{order.userName} · {order.userEmail}</span></div>
@@ -401,9 +570,22 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
                   <p>{order.items.map((item) => `${item.quantity}× ${item.name} (${item.size})`).join(', ')}</p>
                   {order.status === 'paid' && (
                     <div className="admin-tracking-form">
-                      <input placeholder="Transporte (Andreani, Correo…)" value={trackingDrafts[order.id]?.carrier ?? ''} onChange={(event) => updateTracking(order.id, 'carrier', event.target.value)} />
-                      <input placeholder="Código de seguimiento" value={trackingDrafts[order.id]?.trackingCode ?? ''} onChange={(event) => updateTracking(order.id, 'trackingCode', event.target.value)} />
-                      <input placeholder="Link de seguimiento (opcional)" value={trackingDrafts[order.id]?.trackingUrl ?? ''} onChange={(event) => updateTracking(order.id, 'trackingUrl', event.target.value)} />
+                      {order.shipping.method === 'delivery' && correoStatus?.configured && (
+                        order.correoArgentino
+                          ? <>
+                              <a href={`/api/admin/orders/${order.id}/correo-argentino/label`} target="_blank" rel="noreferrer">Ver rótulo (PDF)</a>
+                              <button type="button" disabled={correoBusyId === order.id} onClick={() => { void cancelCorreoShipment(order.id) }}>Cancelar envío Correo Argentino</button>
+                            </>
+                          : <button type="button" disabled={correoBusyId === order.id} onClick={() => { void createCorreoShipment(order.id) }}>Generar envío Correo Argentino</button>
+                      )}
+                      {order.shipping.method === 'delivery' && miCorreoStatus?.configured && !order.correoArgentino && (
+                        order.miCorreoImported
+                          ? <span>Importado a MiCorreo: despáchalo desde el portal y pega acá el seguimiento.</span>
+                          : <button type="button" disabled={correoBusyId === order.id} onClick={() => { void importToMiCorreo(order.id) }}>Importar a MiCorreo</button>
+                      )}
+                      <input placeholder="Transporte (Andreani, Correo…)" value={trackingDrafts[order.id]?.carrier ?? order.carrier} onChange={(event) => updateTracking(order.id, 'carrier', event.target.value)} />
+                      <input placeholder="Código de seguimiento" value={trackingDrafts[order.id]?.trackingCode ?? order.trackingCode} onChange={(event) => updateTracking(order.id, 'trackingCode', event.target.value)} />
+                      <input placeholder="Link de seguimiento (opcional)" value={trackingDrafts[order.id]?.trackingUrl ?? order.trackingUrl} onChange={(event) => updateTracking(order.id, 'trackingUrl', event.target.value)} />
                       <button type="button" onClick={() => { void setOrderStatus(order.id, 'shipped') }}>Marcar como enviado</button>
                     </div>
                   )}

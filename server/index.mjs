@@ -4,8 +4,12 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
+import compression from 'compression'
 import { MercadoPagoConfig, Preference } from 'mercadopago'
 import nodemailer from 'nodemailer'
+import { CorreoArgentinoError, buildOrderPayload, createCorreoArgentinoClient, readCorreoArgentinoConfig } from './correoArgentino.mjs'
+import { MiCorreoError, buildDimensions, buildImportPayload, createMiCorreoClient, readMiCorreoConfig } from './miCorreo.mjs'
+import { buildRobotsTxt, buildSitemapXml, injectImagePreload, injectProductMeta } from './seo.mjs'
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url))
 const projectDirectory = path.resolve(serverDirectory, '..')
@@ -53,6 +57,11 @@ database.exec(`
     name TEXT NOT NULL,
     category TEXT NOT NULL,
     price_ars INTEGER NOT NULL CHECK (price_ars > 0),
+    garment_cost_ars INTEGER NOT NULL DEFAULT 0 CHECK (garment_cost_ars >= 0),
+    logistics_cost_ars INTEGER NOT NULL DEFAULT 0 CHECK (logistics_cost_ars >= 0),
+    production_cost_ars INTEGER NOT NULL DEFAULT 0 CHECK (production_cost_ars >= 0),
+    tax_percent REAL NOT NULL DEFAULT 0 CHECK (tax_percent >= 0 AND tax_percent < 100),
+    profit_percent REAL NOT NULL DEFAULT 0 CHECK (profit_percent >= 0),
     stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
     stock_by_size TEXT NOT NULL DEFAULT '{}',
     composition TEXT NOT NULL,
@@ -159,6 +168,8 @@ const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().m
     tracking_code: 'TEXT',
     tracking_url: 'TEXT',
     shipped_at: 'TEXT',
+    ca_tracking_number: 'TEXT',
+    mc_imported_at: 'TEXT',
     payment_method: "TEXT NOT NULL DEFAULT 'mercadopago'",
     coupon_code: "TEXT NOT NULL DEFAULT ''",
     discount_ars: 'INTEGER NOT NULL DEFAULT 0',
@@ -235,6 +246,11 @@ const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().m
   if (!columns.has('discount_value')) database.exec('ALTER TABLE products ADD COLUMN discount_value INTEGER NOT NULL DEFAULT 0')
   if (!columns.has('extra_images')) database.exec("ALTER TABLE products ADD COLUMN extra_images TEXT NOT NULL DEFAULT '[]'")
   if (!columns.has('stock_by_size')) database.exec("ALTER TABLE products ADD COLUMN stock_by_size TEXT NOT NULL DEFAULT '{}' ")
+  if (!columns.has('garment_cost_ars')) database.exec('ALTER TABLE products ADD COLUMN garment_cost_ars INTEGER NOT NULL DEFAULT 0')
+  if (!columns.has('logistics_cost_ars')) database.exec('ALTER TABLE products ADD COLUMN logistics_cost_ars INTEGER NOT NULL DEFAULT 0')
+  if (!columns.has('production_cost_ars')) database.exec('ALTER TABLE products ADD COLUMN production_cost_ars INTEGER NOT NULL DEFAULT 0')
+  if (!columns.has('tax_percent')) database.exec('ALTER TABLE products ADD COLUMN tax_percent REAL NOT NULL DEFAULT 0')
+  if (!columns.has('profit_percent')) database.exec('ALTER TABLE products ADD COLUMN profit_percent REAL NOT NULL DEFAULT 0')
   database.exec(`
     CREATE TABLE IF NOT EXISTS product_reviews (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -511,6 +527,15 @@ const productFromRow = (row) => ({
   isGiftCard: Boolean(row.is_gift_card),
 })
 
+const adminProductFromRow = (row) => ({
+  ...productFromRow(row),
+  garmentCostArs: Number(row.garment_cost_ars ?? 0),
+  logisticsCostArs: Number(row.logistics_cost_ars ?? 0),
+  productionCostArs: Number(row.production_cost_ars ?? 0),
+  taxPercent: Number(row.tax_percent ?? 0),
+  profitPercent: Number(row.profit_percent ?? 0),
+})
+
 // sold = unidades en pedidos pagados; alimenta el orden por popularidad
 const productSelect = "SELECT p.*, (SELECT COALESCE(SUM(oi.quantity), 0) FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE oi.product_id = p.id AND o.status IN ('paid', 'shipped', 'delivered')) AS sold FROM products p"
 const selectProductById = database.prepare(`${productSelect} WHERE p.id = ?`)
@@ -594,7 +619,8 @@ const applyRateLimit = (request, response, next, maxRequests = 20, windowMs = 60
 
 app.disable('x-powered-by')
 app.set('trust proxy', isProduction ? 1 : false)
-app.use(express.json({ limit: '6mb' }))
+app.use(compression())
+app.use(express.json({ limit: '6mb', inflate: false }))
 app.use((request, response, next) => {
   const origin = request.get('origin')
   const isAllowedOrigin = !origin || allowedOrigins.has(origin) || (isProduction ? origin.endsWith('.unfocus.shop') : ['localhost', '127.0.0.1'].includes(new URL(origin || 'http://localhost').hostname))
@@ -855,6 +881,11 @@ const validateProduct = (body) => {
   const name = typeof body.name === 'string' ? body.name.trim() : ''
   const slug = typeof body.slug === 'string' ? body.slug.trim().toLowerCase() : ''
   const price = Number(body.price)
+  const garmentCostArs = Number(body.garmentCostArs ?? 0)
+  const logisticsCostArs = Number(body.logisticsCostArs ?? 0)
+  const productionCostArs = Number(body.productionCostArs ?? 0)
+  const taxPercent = Number(body.taxPercent ?? 0)
+  const profitPercent = Number(body.profitPercent ?? 0)
   const hasSizeStock = body.stockBySize !== null && typeof body.stockBySize === 'object' && !Array.isArray(body.stockBySize)
   const stockBySize = hasSizeStock
     ? Object.fromEntries(Object.entries(body.stockBySize).map(([size, value]) => [size, Number(value)]))
@@ -871,6 +902,9 @@ const validateProduct = (body) => {
   if (name.length < 2 || name.length > 80) throw new Error('El nombre debe tener entre 2 y 80 caracteres.')
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) throw new Error('El enlace del producto no es válido.')
   if (!Number.isSafeInteger(price) || price < 1) throw new Error('El precio debe ser un importe entero en pesos argentinos.')
+  if (![garmentCostArs, logisticsCostArs, productionCostArs].every((cost) => Number.isSafeInteger(cost) && cost >= 0)) throw new Error('Los costos deben ser importes enteros mayores o iguales a cero.')
+  if (!Number.isFinite(taxPercent) || taxPercent < 0 || taxPercent >= 100) throw new Error('El porcentaje de impuestos debe ser mayor o igual a cero y menor a 100.')
+  if (!Number.isFinite(profitPercent) || profitPercent < 0 || profitPercent > 1000) throw new Error('La ganancia porcentual debe estar entre 0 y 1000.')
   if (discountType === 'percent' && (!Number.isInteger(discountValue) || discountValue < 1 || discountValue > 90)) throw new Error('El descuento porcentual debe ser un entero entre 1 y 90.')
   if (discountType === 'fixed' && (!Number.isInteger(discountValue) || discountValue < 1 || discountValue >= price)) throw new Error('El descuento en pesos debe ser un entero menor al precio original.')
   if (hasInvalidSizeStock || !Number.isSafeInteger(stock) || stock < 0) throw new Error('El stock por talle debe contener números enteros mayores o iguales a cero.')
@@ -879,7 +913,7 @@ const validateProduct = (body) => {
   if (!description || description.length > 500) throw new Error('La descripción debe tener hasta 500 caracteres.')
   if (!designDescription || designDescription.length > 500) throw new Error('La descripción del diseño debe tener hasta 500 caracteres.')
   if (!Array.isArray(gallery) || gallery.length < minimumProductImages || gallery.length > maximumProductImages) throw new Error(`Sube entre ${minimumProductImages} y ${maximumProductImages} imágenes del producto.`)
-  return { name, slug, price, discountType, discountValue, stock, stockBySize, composition, description, designDescription, category, gallery }
+  return { name, slug, price, garmentCostArs, logisticsCostArs, productionCostArs, taxPercent, profitPercent, discountType, discountValue, stock, stockBySize, composition, description, designDescription, category, gallery }
 }
 
 const requireProductBody = async (body) => {
@@ -903,18 +937,18 @@ const requireProductBody = async (body) => {
 }
 
 const insertProduct = database.prepare(`
-  INSERT INTO products (slug, name, category, price_ars, stock, stock_by_size, composition, features_json, description, design_description, front_image, front_alt, back_image, back_alt, badge, extra_images, discount_type, discount_value)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO products (slug, name, category, price_ars, garment_cost_ars, logistics_cost_ars, production_cost_ars, tax_percent, profit_percent, stock, stock_by_size, composition, features_json, description, design_description, front_image, front_alt, back_image, back_alt, badge, extra_images, discount_type, discount_value)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `)
 const updateProduct = database.prepare(`
-  UPDATE products SET slug = ?, name = ?, category = ?, price_ars = ?, stock = ?, stock_by_size = ?, composition = ?, features_json = ?, description = ?, design_description = ?, front_image = ?, front_alt = ?, back_image = ?, back_alt = ?, badge = ?, extra_images = ?, discount_type = ?, discount_value = ?, updated_at = CURRENT_TIMESTAMP
+  UPDATE products SET slug = ?, name = ?, category = ?, price_ars = ?, garment_cost_ars = ?, logistics_cost_ars = ?, production_cost_ars = ?, tax_percent = ?, profit_percent = ?, stock = ?, stock_by_size = ?, composition = ?, features_json = ?, description = ?, design_description = ?, front_image = ?, front_alt = ?, back_image = ?, back_alt = ?, badge = ?, extra_images = ?, discount_type = ?, discount_value = ?, updated_at = CURRENT_TIMESTAMP
   WHERE id = ?
 `)
 
 app.post('/api/admin/products', requireAdmin, async (request, response) => {
   try {
     const product = await requireProductBody(request.body)
-    const result = insertProduct.run(product.slug, product.name, product.category, product.price, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue)
+    const result = insertProduct.run(product.slug, product.name, product.category, product.price, product.garmentCostArs, product.logisticsCostArs, product.productionCostArs, product.taxPercent, product.profitPercent, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue)
     response.status(201).json({ product: productFromRow(selectProductById.get(Number(result.lastInsertRowid))) })
   } catch (error) {
     response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un producto con ese enlace.' : error.message })
@@ -926,7 +960,7 @@ app.put('/api/admin/products/:id', requireAdmin, async (request, response) => {
   if (!Number.isSafeInteger(id) || !selectProductById.get(id)) return response.status(404).json({ error: 'Producto no encontrado.' })
   try {
     const product = await requireProductBody(request.body)
-    updateProduct.run(product.slug, product.name, product.category, product.price, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue, id)
+    updateProduct.run(product.slug, product.name, product.category, product.price, product.garmentCostArs, product.logisticsCostArs, product.productionCostArs, product.taxPercent, product.profitPercent, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue, id)
     await notifyRestockedCustomers(id, product.name, product.stockBySize || {})
     response.json({ product: productFromRow(selectProductById.get(id)) })
   } catch (error) {
@@ -940,6 +974,10 @@ app.delete('/api/admin/products/:id', requireAdmin, (request, response) => {
   const result = database.prepare('DELETE FROM products WHERE id = ?').run(id)
   if (!result.changes) return response.status(404).json({ error: 'Producto no encontrado.' })
   response.json({ ok: true })
+})
+
+app.get('/api/admin/products', requireAdmin, (_request, response) => {
+  response.json({ products: allProducts.all().map(adminProductFromRow) })
 })
 
 const serializeOrder = (order, extra = {}) => ({
@@ -970,6 +1008,8 @@ const serializeOrder = (order, extra = {}) => ({
   giftCards: ['paid', 'shipped', 'delivered'].includes(order.status) ? database.prepare('SELECT code, initial_ars AS initialArs, balance_ars AS balanceArs FROM gift_cards WHERE order_id = ? ORDER BY id').all(order.id) : [],
   trackingUrl: order.tracking_url ?? '',
   shippedAt: order.shipped_at ?? null,
+  correoArgentino: Boolean(order.ca_tracking_number),
+  miCorreoImported: Boolean(order.mc_imported_at),
   items: database.prepare('SELECT product_name AS name, product_slug AS slug, image_url AS image, size, quantity, unit_price_ars AS unitPriceArs FROM order_items WHERE order_id = ?').all(order.id),
   ...extra,
 })
@@ -1052,7 +1092,7 @@ app.post('/api/products/:slug/restock-notifications', limitRestockRequests, (req
   if (!product || product.is_gift_card) return response.status(404).json({ error: 'Producto no encontrado.' })
   const email = typeof request.body?.email === 'string' ? request.body.email.trim().toLowerCase() : ''
   const size = typeof request.body?.size === 'string' ? request.body.size.trim().toUpperCase() : ''
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || !/^(XS|S|M|L|XL|2XL|3XL)$/.test(size)) {
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^(XS|S|M|L|XL|2XL|3XL)$/.test(size)) {
     return response.status(400).json({ error: 'Ingresa un correo válido y selecciona un talle.' })
   }
   const stockBySize = JSON.parse(product.stock_by_size || '{}')
@@ -1142,12 +1182,14 @@ const buildOrderFromItems = (items, userId) => {
   return { orderItems, total, eligibleSubtotal, reference, userId }
 }
 
-const createOrderRecord = (request, items, shipping, { notify = true, paymentMethod = 'mercadopago' } = {}) => {
+const createOrderRecord = (request, items, shipping, { notify = true, paymentMethod = 'mercadopago', quotedShippingArs } = {}) => {
   const { orderItems, total: subtotal, eligibleSubtotal, reference, userId } = buildOrderFromItems(items, request.user.id)
   const digitalOnly = orderItems.every((item) => item.product.isGiftCard)
   const shippingDetails = digitalOnly
     ? { method: 'digital', name: cleanText(shipping?.name, 80) || request.user.name, phone: cleanText(shipping?.phone, 40), street: '', city: '', province: '', postalCode: '', notes: '', costArs: 0 }
     : parseShippingDetails(shipping, subtotal)
+  const freeShipping = storeSettings.freeShippingThresholdArs > 0 && subtotal >= storeSettings.freeShippingThresholdArs
+  if (quotedShippingArs !== undefined && shippingDetails.method === 'delivery' && !freeShipping) shippingDetails.costArs = quotedShippingArs
   const { coupon, discount } = request.body?.couponCode ? evaluateCoupon(request.body.couponCode, eligibleSubtotal) : { coupon: null, discount: 0 }
   const payable = subtotal - discount + shippingDetails.costArs
   let giftCard = null
@@ -1331,12 +1373,13 @@ app.delete('/api/admin/coupons/:id', requireAdmin, (request, response) => {
   response.json({ coupons: database.prepare(`${couponSelect} ORDER BY id DESC`).all() })
 })
 
-app.post('/api/orders', resolveCheckoutUser, (request, response) => {
+app.post('/api/orders', resolveCheckoutUser, async (request, response) => {
   try {
     if (request.body.paymentMethod !== 'transfer') throw new Error('Elige un medio de pago válido.')
     if (request.body.acceptTerms !== true) throw new Error('Debes aceptar los términos y condiciones para continuar.')
     if (!transferDetails()) throw new Error('Las transferencias no están disponibles por el momento.')
-    const result = createOrderRecord(request, request.body.items, request.body.shipping, { paymentMethod: 'transfer' })
+    const quotedShippingArs = await resolveQuotedShipping(request)
+    const result = createOrderRecord(request, request.body.items, request.body.shipping, { paymentMethod: 'transfer', quotedShippingArs })
     result.order.paymentMethod = 'transfer'
     if (result.order.totalArs <= 0) {
       markOrderPaidWithoutCharge(result.order, request.user.id)
@@ -1465,6 +1508,44 @@ app.get('/api/admin/summary', requireAdmin, (_request, response) => {
   })
 })
 
+const lowStockThreshold = 3
+
+app.get('/api/admin/reports', requireAdmin, (request, response) => {
+  const days = [7, 30, 90].includes(Number(request.query.days)) ? Number(request.query.days) : 30
+  const since = `-${days} days`
+  const totals = database.prepare(`
+    SELECT COUNT(*) AS orders, COALESCE(SUM(total_ars), 0) AS revenue
+    FROM orders WHERE status IN ('paid', 'shipped', 'delivered') AND created_at >= datetime('now', ?)
+  `).get(since)
+  const daily = database.prepare(`
+    SELECT date(created_at) AS day, COUNT(*) AS orders, SUM(total_ars) AS revenue
+    FROM orders WHERE status IN ('paid', 'shipped', 'delivered') AND created_at >= datetime('now', ?)
+    GROUP BY day ORDER BY day DESC
+  `).all(since)
+  const topProducts = database.prepare(`
+    SELECT oi.product_name AS name, SUM(oi.quantity) AS units, SUM(oi.quantity * oi.unit_price_ars) AS revenue
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id
+    WHERE o.status IN ('paid', 'shipped', 'delivered') AND o.created_at >= datetime('now', ?)
+    GROUP BY oi.product_name ORDER BY units DESC, revenue DESC LIMIT 10
+  `).all(since)
+  const lowStock = allProducts.all().map(productFromRow)
+    .filter((product) => !product.isGiftCard)
+    .flatMap((product) => Object.entries(product.stockBySize)
+      .filter(([, stock]) => Number(stock) <= lowStockThreshold)
+      .map(([size, stock]) => ({ productId: product.id, name: product.name, size, stock: Number(stock) })))
+    .sort((a, b) => a.stock - b.stock || a.name.localeCompare(b.name))
+  response.json({
+    days,
+    orders: Number(totals.orders),
+    revenue: Number(totals.revenue),
+    averageOrder: totals.orders ? Math.round(Number(totals.revenue) / Number(totals.orders)) : 0,
+    daily: daily.map((row) => ({ day: row.day, orders: Number(row.orders), revenue: Number(row.revenue) })),
+    topProducts: topProducts.map((row) => ({ name: row.name, units: Number(row.units), revenue: Number(row.revenue) })),
+    lowStock,
+    lowStockThreshold,
+  })
+})
+
 app.get('/api/admin/orders', requireAdmin, (_request, response) => {
   const orderRows = database.prepare(`
     SELECT o.*, u.name AS user_name, u.email AS user_email
@@ -1505,13 +1586,13 @@ app.patch('/api/admin/orders/:id/status', requireAdmin, (request, response) => {
   const status = typeof request.body.status === 'string' ? request.body.status : ''
   if (!Number.isSafeInteger(id)) return response.status(400).json({ error: 'Pedido inválido.' })
   if (!orderStatuses.includes(status)) return response.status(400).json({ error: 'Estado de pedido inválido.' })
-  const order = database.prepare('SELECT id, user_id, reference, status, tracking_code FROM orders WHERE id = ?').get(id)
+  const order = database.prepare('SELECT id, user_id, reference, status, tracking_code, carrier, tracking_url FROM orders WHERE id = ?').get(id)
   if (!order) return response.status(404).json({ error: 'Pedido no encontrado.' })
   const fulfilled = ['paid', 'shipped', 'delivered']
   if ((status === 'shipped' || status === 'delivered') && !fulfilled.includes(order.status)) return response.status(400).json({ error: 'Solo se pueden despachar pedidos pagados.' })
-  const carrier = cleanText(request.body.carrier, 60)
-  const trackingCode = cleanText(request.body.trackingCode, 80)
-  const trackingUrl = cleanText(request.body.trackingUrl, 300)
+  const carrier = cleanText(request.body.carrier, 60) || order.carrier || ''
+  const trackingCode = cleanText(request.body.trackingCode, 80) || order.tracking_code || ''
+  const trackingUrl = cleanText(request.body.trackingUrl, 300) || order.tracking_url || ''
   if (trackingUrl && !/^https?:\/\//i.test(trackingUrl)) return response.status(400).json({ error: 'El enlace de seguimiento debe comenzar con http:// o https://.' })
   const changed = order.status !== status
   if (changed && status === 'cancelled') adjustOrderStock(id, 1)
@@ -1536,6 +1617,160 @@ app.patch('/api/admin/orders/:id/status', requireAdmin, (request, response) => {
   }
   response.json({ ok: true, status, carrier, trackingCode, trackingUrl })
 })
+
+const correoArgentinoConfig = readCorreoArgentinoConfig()
+const correoArgentino = createCorreoArgentinoClient(correoArgentinoConfig)
+const correoArgentinoTrackingUrl = (trackingNumber) => `https://www.correoargentino.com.ar/formularios/e-commerce?id=${encodeURIComponent(trackingNumber)}`
+
+const correoArgentinoRoute = (handler) => async (request, response) => {
+  try {
+    await handler(request, response)
+  } catch (error) {
+    if (!(error instanceof CorreoArgentinoError)) throw error
+    response.status(error.status).json({ error: error.message })
+  }
+}
+
+const loadCorreoArgentinoOrder = (request) => {
+  const id = Number(request.params.id)
+  if (!Number.isSafeInteger(id)) throw new CorreoArgentinoError('Pedido inválido.', 400)
+  const order = database.prepare('SELECT o.*, u.email AS user_email FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id = ?').get(id)
+  if (!order) throw new CorreoArgentinoError('Pedido no encontrado.', 404)
+  return order
+}
+
+app.get('/api/admin/correo-argentino/status', requireAdmin, correoArgentinoRoute(async (request, response) => {
+  const configured = correoArgentinoConfig.missing.length === 0
+  let credentialsValid = null
+  if (configured && request.query.check === '1') {
+    try { credentialsValid = await correoArgentino.validateCredentials() } catch { credentialsValid = false }
+  }
+  response.json({ configured, missing: correoArgentinoConfig.missing, environment: correoArgentinoConfig.environment, credentialsValid })
+}))
+
+app.get('/api/admin/correo-argentino/agencies', requireAdmin, correoArgentinoRoute(async (request, response) => {
+  const flag = (value) => value === 'true' || value === 'false' ? value : undefined
+  const stateId = typeof request.query.stateId === 'string' ? request.query.stateId.slice(0, 6) : undefined
+  response.json({ agencies: await correoArgentino.getAgencies({ stateId, pickupAvailability: flag(request.query.pickupAvailability), packageReception: flag(request.query.packageReception) }) })
+}))
+
+app.post('/api/admin/orders/:id/correo-argentino', requireAdmin, correoArgentinoRoute(async (request, response) => {
+  const order = loadCorreoArgentinoOrder(request)
+  if (order.status !== 'paid') throw new CorreoArgentinoError('Solo se puede generar el envío de pedidos pagados.', 400)
+  if (order.shipping_method !== 'delivery') throw new CorreoArgentinoError('El pedido no es un envío a domicilio.', 400)
+  if (order.ca_tracking_number) throw new CorreoArgentinoError('El pedido ya tiene un envío generado en Correo Argentino.', 400)
+  const { trackingNumber } = await correoArgentino.createOrder(buildOrderPayload(correoArgentinoConfig, order))
+  const trackingUrl = correoArgentinoTrackingUrl(trackingNumber)
+  database.prepare('UPDATE orders SET ca_tracking_number = ?, carrier = ?, tracking_code = ?, tracking_url = ? WHERE id = ?').run(trackingNumber, 'Correo Argentino', trackingNumber, trackingUrl, order.id)
+  response.json({ ok: true, carrier: 'Correo Argentino', trackingCode: trackingNumber, trackingUrl })
+}))
+
+app.get('/api/admin/orders/:id/correo-argentino/label', requireAdmin, correoArgentinoRoute(async (request, response) => {
+  const order = loadCorreoArgentinoOrder(request)
+  if (!order.ca_tracking_number) throw new CorreoArgentinoError('El pedido no tiene un envío generado en Correo Argentino.', 400)
+  const { pdf, fileName } = await correoArgentino.getLabel(order.ca_tracking_number, '', request.query.format === 'label' ? 'label' : '10x15')
+  response.setHeader('Content-Type', 'application/pdf')
+  response.setHeader('Content-Disposition', `inline; filename="${fileName.replace(/[^\w.-]/g, '_')}"`)
+  response.send(pdf)
+}))
+
+app.get('/api/admin/orders/:id/correo-argentino/tracking', requireAdmin, correoArgentinoRoute(async (request, response) => {
+  const order = loadCorreoArgentinoOrder(request)
+  if (!order.ca_tracking_number) throw new CorreoArgentinoError('El pedido no tiene un envío generado en Correo Argentino.', 400)
+  response.json(await correoArgentino.getTracking(order.ca_tracking_number))
+}))
+
+app.post('/api/admin/orders/:id/correo-argentino/cancel', requireAdmin, correoArgentinoRoute(async (request, response) => {
+  const order = loadCorreoArgentinoOrder(request)
+  if (!order.ca_tracking_number) throw new CorreoArgentinoError('El pedido no tiene un envío generado en Correo Argentino.', 400)
+  if (order.status === 'shipped' || order.status === 'delivered') throw new CorreoArgentinoError('El pedido ya fue despachado y no se puede cancelar el envío.', 400)
+  await correoArgentino.cancelOrder(order.ca_tracking_number)
+  database.prepare("UPDATE orders SET ca_tracking_number = NULL, carrier = '', tracking_code = '', tracking_url = '' WHERE id = ?").run(order.id)
+  response.json({ ok: true })
+}))
+
+const miCorreoConfig = readMiCorreoConfig()
+const miCorreo = createMiCorreoClient(miCorreoConfig)
+const miCorreoActive = miCorreoConfig.missing.length === 0
+
+const miCorreoRoute = (handler) => async (request, response) => {
+  try {
+    await handler(request, response)
+  } catch (error) {
+    if (!(error instanceof MiCorreoError)) throw error
+    response.status(error.status).json({ error: error.message })
+  }
+}
+
+const physicalQuantity = (items, userId) => buildOrderFromItems(items, userId).orderItems.reduce((sum, item) => sum + (item.product.isGiftCard ? 0 : item.quantity), 0)
+
+const quoteDelivery = async (items, postalCode, userId) => {
+  const quantity = physicalQuantity(items, userId)
+  if (!quantity) return []
+  return miCorreo.getRates({ postalCodeDestination: postalCode, dimensions: buildDimensions(miCorreoConfig, quantity), deliveredType: 'D' })
+}
+
+// Devuelve el costo cotizado por MiCorreo (o undefined para usar la tarifa fija de la tienda).
+const resolveQuotedShipping = async (request) => {
+  const shipping = request.body?.shipping
+  if (!miCorreoActive || shipping?.method !== 'delivery') return undefined
+  let rates
+  try {
+    rates = await quoteDelivery(request.body.items, shipping.postalCode, request.user.id)
+  } catch (error) {
+    if (error instanceof MiCorreoError && error.status >= 500) return undefined
+    throw error
+  }
+  if (!rates.length) return undefined
+  const productType = typeof shipping.rateType === 'string' ? shipping.rateType : 'CP'
+  const rate = rates.find((candidate) => candidate.productType === productType)
+  if (!rate) throw new Error('La modalidad de envío elegida ya no está disponible. Vuelve a elegirla.')
+  return rate.priceArs
+}
+
+app.post('/api/shipping/quote', applyRateLimit, miCorreoRoute(async (request, response) => {
+  if (!miCorreoActive) return response.json({ available: false, rates: [] })
+  try {
+    const rates = await quoteDelivery(request.body?.items, request.body?.postalCode, null)
+    response.json({ available: rates.length > 0, rates })
+  } catch (error) {
+    if (error instanceof MiCorreoError && error.status < 500) throw error
+    if (error instanceof MiCorreoError) return response.json({ available: false, rates: [] })
+    response.status(400).json({ error: 'Revisa los productos del pedido para cotizar el envío.' })
+  }
+}))
+
+app.get('/api/admin/micorreo/status', requireAdmin, miCorreoRoute(async (request, response) => {
+  let credentialsValid = null
+  if (miCorreoActive && request.query.check === '1') {
+    try { credentialsValid = await miCorreo.validateCredentials() } catch { credentialsValid = false }
+  }
+  response.json({ configured: miCorreoActive, missing: miCorreoConfig.missing, environment: miCorreoConfig.environment, credentialsValid })
+}))
+
+app.get('/api/admin/micorreo/agencies', requireAdmin, miCorreoRoute(async (request, response) => {
+  const provinceCode = typeof request.query.provinceCode === 'string' ? request.query.provinceCode.slice(0, 2).toUpperCase() : undefined
+  response.json({ agencies: await miCorreo.getAgencies({ provinceCode }) })
+}))
+
+app.post('/api/admin/orders/:id/micorreo/import', requireAdmin, miCorreoRoute(async (request, response) => {
+  const order = loadCorreoArgentinoOrder(request)
+  if (order.status !== 'paid') throw new MiCorreoError('Solo se puede importar a MiCorreo un pedido pagado.', 400)
+  if (order.shipping_method !== 'delivery') throw new MiCorreoError('El pedido no es un envío a domicilio.', 400)
+  if (order.mc_imported_at) throw new MiCorreoError('El pedido ya fue importado a MiCorreo.', 400)
+  const quantity = database.prepare('SELECT COALESCE(SUM(quantity), 0) AS quantity FROM order_items WHERE order_id = ?').get(order.id).quantity
+  const payload = buildImportPayload(order, { sender: correoArgentinoConfig.sender, dimensions: buildDimensions(miCorreoConfig, quantity || 1) })
+  await miCorreo.importShipping(payload)
+  database.prepare("UPDATE orders SET mc_imported_at = datetime('now') WHERE id = ?").run(order.id)
+  response.json({ ok: true })
+}))
+
+// shippingId = código de seguimiento que MiCorreo asigna al despachar; se carga en el pedido al marcarlo como enviado.
+app.get('/api/admin/orders/:id/micorreo/tracking', requireAdmin, miCorreoRoute(async (request, response) => {
+  const order = loadCorreoArgentinoOrder(request)
+  if (!order.tracking_code) throw new MiCorreoError('El pedido todavía no tiene código de seguimiento.', 400)
+  response.json(await miCorreo.getTracking(order.tracking_code))
+}))
 
 app.get('/api/products/:slug/reviews', (request, response) => {
   const product = selectProductBySlug.get(request.params.slug)
@@ -1573,7 +1808,8 @@ app.post('/api/payments/create-preference', resolveCheckoutUser, async (request,
   let order
   try {
     if (request.body.acceptTerms !== true) throw new Error('Debes aceptar los términos y condiciones para continuar.')
-    order = createOrderRecord(request, request.body.items, request.body.shipping, { notify: false })
+    const quotedShippingArs = await resolveQuotedShipping(request)
+    order = createOrderRecord(request, request.body.items, request.body.shipping, { notify: false, quotedShippingArs })
     if (order.order.totalArs <= 0) {
       markOrderPaidWithoutCharge(order.order, request.user.id)
       return response.json({ order: order.order, paymentUrl: null, initPoint: null })
@@ -1714,14 +1950,40 @@ app.use((error, _request, response, _next) => {
 })
 
 if (isProduction) {
-  app.use(express.static(path.join(projectDirectory, 'dist')))
-  app.get(/^(?!\/api\/).*/, (_request, response) => response.sendFile(path.join(projectDirectory, 'dist', 'index.html')))
+  const indexHtmlPath = path.join(projectDirectory, 'dist', 'index.html')
+  const seoBaseUrl = publicBaseUrl.replace(/\/$/, '')
+  const legalPageSlugs = ['terminos', 'privacidad', 'cambios', 'arrepentimiento', 'defensa', 'baja', 'faq']
+  app.get('/robots.txt', (_request, response) => response.type('text/plain').send(buildRobotsTxt(seoBaseUrl)))
+  app.get('/sitemap.xml', (_request, response) => response.type('application/xml').send(buildSitemapXml(seoBaseUrl, allProducts.all().map(productFromRow), legalPageSlugs)))
+  app.use(express.static(path.join(projectDirectory, 'dist'), {
+    index: false,
+    setHeaders: (response, filePath) => {
+      if (path.basename(filePath) === 'index.html') {
+        response.setHeader('Cache-Control', 'no-cache')
+      } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+        response.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+      }
+    },
+  }))
+  app.get(/^(?!\/api\/).*/, async (request, response) => {
+    const slug = typeof request.query.producto === 'string' ? request.query.producto : ''
+    const row = slug ? selectProductBySlug.get(slug) : null
+    const html = await readFile(indexHtmlPath, 'utf8')
+    response.setHeader('Cache-Control', 'no-cache')
+    if (row) return response.type('html').send(injectProductMeta(html, seoBaseUrl, productFromRow(row)))
+    const hero = allProducts.all().map(productFromRow).find((product) => !product.isGiftCard && product.gallery[1]?.src)
+    response.type('html').send(hero ? injectImagePreload(html, seoBaseUrl, hero.gallery[1].src) : html)
+  })
 }
 
 await new Promise((resolve) => app.listen(port, '0.0.0.0', resolve))
 console.log(`UnFocus API listening on http://localhost:${port}`)
 console.log(`SQLite database: ${databasePath}`)
 if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) console.log('No admin bootstrap configured. Set ADMIN_EMAIL and ADMIN_PASSWORD in .env to create/promote an administrator.')
+if (correoArgentinoConfig.missing.length) console.log(`Correo Argentino desactivado. Faltan en .env: ${correoArgentinoConfig.missing.join(', ')}`)
+else console.log(`Correo Argentino activo (${correoArgentinoConfig.environment}).`)
+if (miCorreoActive) console.log(`MiCorreo activo (${miCorreoConfig.environment}): cotización de envío en el checkout.`)
+else console.log(`MiCorreo desactivado (se usa la tarifa fija). Faltan en .env: ${miCorreoConfig.missing.join(', ')}`)
 
 const shutdown = () => {
   database.close()
