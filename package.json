@@ -14,7 +14,8 @@
     "preview": "vite preview"
   },
   "overrides": {
-    "body-parser": "^2.4.0"
+    "body-parser": "^2.4.0",
+    "minimatch": "^11.0.1"
   },
   "dependencies": {
     "express": "^5.3.0",
