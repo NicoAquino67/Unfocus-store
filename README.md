@@ -23,7 +23,7 @@ El registro crea una cuenta de cliente. Las sesiones usan cookies `HttpOnly` y l
 
 ### Checkout y envío
 
-1. En la bolsa, "Continuar" abre el paso **Datos de entrega**: nombre, teléfono, domicilio (o retiro en persona si hay dirección de retiro configurada), localidad, provincia, código postal e indicaciones. Los datos se precargan desde el último pedido.
+1. En la bolsa, "Continuar" abre el paso **Datos de entrega**: nombre, teléfono, domicilio (o retiro en persona si hay dirección de retiro configurada), localidad, provincia, código postal e indicaciones. Si la cuenta tiene direcciones guardadas, se ofrece la predeterminada; si no, se recuperan los datos del último pedido.
 2. Hay que aceptar los términos y condiciones.
 3. El pedido se guarda en ARS con estado **Pendiente de pago** (subtotal + envío) y se redirige a Mercado Pago.
 
@@ -49,6 +49,11 @@ Se envían por SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SM
 - **Cuotas y medios de pago**: los gestiona Mercado Pago. La transferencia bancaria se configura en el admin (titular, banco, CBU, alias) y el checkout muestra los pasos.
 - **Stock**: cancelar un pedido desde el admin restaura stock (y cupón/saldo de tarjeta); reactivarlo lo vuelve a descontar.
 - **Emails**: bienvenida, pedido creado, pago confirmado, envío; baja de newsletter con enlace.
+- **Aviso de reposición**: el cliente puede pedir un aviso por talla sin iniciar sesión; al cargar stock en el admin, se envía un email a las personas suscritas (requiere SMTP).
+- **Direcciones**: las cuentas pueden guardar varias direcciones, editarlas, borrar y elegir la predeterminada; el checkout permite seleccionar una guardada.
+- **Búsqueda**: sugerencias globales por nombre, categoría y características, con acceso directo a la ficha.
+- **Envío**: la ficha permite estimar la tarifa actual configurada ingresando un código postal. No es una cotización por zona; la consulta en tiempo real y la generación de etiquetas de Correo Argentino requieren credenciales/API aún no configuradas.
+- **Seguimiento**: la cuenta muestra una línea de estado del pedido y el enlace/código externo cargado por administración. La consulta automática de movimientos del transportista requiere su API.
 - **Defensa del consumidor** y botón de baja en el pie y en las páginas legales.
 - **Catálogo**: orden por precio, novedad y popularidad; "vistos recientemente" (con recomendaciones aleatorias para usuarios nuevos, sin repetir el producto abierto); galería de 3 a 10 imágenes con zoom (admin con carga múltiple).
 - **Preguntas frecuentes**: página `?legal=faq` con las dudas más comunes.

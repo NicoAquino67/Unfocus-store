@@ -18,11 +18,12 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import unfocusLogo from '../ident/png full color.png'
-import unfocusLogoWhite from '../ident/png blanco.png'
+import unfocusLogo from './assets/logo-full-color.png'
+import unfocusLogoWhite from './assets/logo-blanco.png'
 import PriceTag from './PriceTag'
 import { categories, getSalePrice, formatPrice, getDefaultSize, getProductImage, getProductFacets, getStockForSize, giftCardAmounts, giftCardMaximum, giftCardMinimum, isValidGiftCardAmount, initialProducts, normalizeProductFacets, garmentCuts, productAudiences, productGenders, sizes, type CategoryFilter, type DisplayCurrency, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
 import { apiRequest, type AccountNotification, type AccountSummary, type AccountUser, type ProductReview, type ShippingRate, type StoreConfig } from './api'
+import { calculateShipping } from './shipping'
 import AccountPanel from './AccountPanel'
 import ProductAdmin from './ProductAdmin'
 import CheckoutForm, { type CheckoutPayload } from './CheckoutForm'
@@ -37,6 +38,7 @@ type ProductDetailProps = {
   selectedSize: string
   selectedView: number
   currentUser: AccountUser | null
+  shipping: StoreConfig['shipping'] | null
   currency: DisplayCurrency
   usdArsRate: number | null
   onBack: () => void
@@ -82,21 +84,22 @@ const addBusinessDays = (days: number) => {
 
 const formatDeliveryDate = (date: Date) => date.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })
 
-function ShippingCalculator({ productId, size }: { productId: number; size: string }) {
+function ShippingCalculator({ productId, size, priceArs, shipping, currency, usdArsRate }: { productId: number; size: string; priceArs: number; shipping: StoreConfig['shipping'] | null; currency: DisplayCurrency; usdArsRate: number | null }) {
   const [postalCode, setPostalCode] = useState(() => window.localStorage.getItem('unfocus-postal-code') ?? '')
   const [state, setState] = useState<{ status: 'idle' | 'loading' | 'done' | 'error'; rates: ShippingRate[]; available: boolean; message: string }>({ status: 'idle', rates: [], available: true, message: '' })
+  const fallbackShipping = calculateShipping(priceArs, 'delivery', shipping)
 
   const calculate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const digits = postalCode.replace(/\D/g, '').slice(0, 4)
-    if (digits.length !== 4) {
-      setState({ status: 'error', rates: [], available: true, message: 'Ingresa un código postal de 4 dígitos.' })
+    const destination = postalCode.trim().toUpperCase()
+    if (!/^[A-Z0-9 -]{4,10}$/.test(destination)) {
+      setState({ status: 'error', rates: [], available: true, message: 'Ingresa un código postal válido.' })
       return
     }
-    window.localStorage.setItem('unfocus-postal-code', digits)
+    window.localStorage.setItem('unfocus-postal-code', destination)
     setState({ status: 'loading', rates: [], available: true, message: '' })
     try {
-      const result = await apiRequest<{ available: boolean; rates: ShippingRate[] }>('/api/shipping/quote', { method: 'POST', body: JSON.stringify({ items: [{ productId, size, quantity: 1 }], postalCode: digits }) })
+      const result = await apiRequest<{ available: boolean; rates: ShippingRate[] }>('/api/shipping/quote', { method: 'POST', body: JSON.stringify({ items: [{ productId, size, quantity: 1 }], postalCode: destination }) })
       setState({ status: 'done', rates: result.rates, available: result.available, message: '' })
     } catch (error) {
       setState({ status: 'error', rates: [], available: true, message: error instanceof Error ? error.message : 'No pudimos calcular el envío.' })
@@ -108,13 +111,13 @@ function ShippingCalculator({ productId, size }: { productId: number; size: stri
       <form onSubmit={calculate}>
         <label htmlFor="shipping-calculator-postal">Calcular envío</label>
         <div>
-          <input id="shipping-calculator-postal" inputMode="numeric" maxLength={8} placeholder="Código postal" value={postalCode} onChange={(event) => setPostalCode(event.target.value)} autoComplete="postal-code" />
+          <input id="shipping-calculator-postal" inputMode="text" maxLength={10} placeholder="Ej. C1000" value={postalCode} onChange={(event) => setPostalCode(event.target.value.toUpperCase())} autoComplete="postal-code" />
           <button type="submit" disabled={state.status === 'loading'}>{state.status === 'loading' ? 'Calculando…' : 'Calcular'}</button>
         </div>
       </form>
       <div aria-live="polite">
         {state.status === 'error' && <p className="shipping-calculator__error">{state.message}</p>}
-        {state.status === 'done' && !state.available && <p>El costo y el plazo exactos se muestran al finalizar la compra.</p>}
+        {state.status === 'done' && !state.available && <p>{shipping ? `Estimación para ${postalCode}: ${fallbackShipping > 0 ? formatPrice(fallbackShipping, currency, usdArsRate) : 'sin cargo'}. ` : 'El costo de envío todavía no está configurado. '}La cotización exacta requiere las credenciales de Correo Argentino y se confirma al finalizar la compra.</p>}
         {state.status === 'done' && state.rates.map((rate) => {
           const min = Number.parseInt(rate.deliveryTimeMin ?? '', 10)
           const max = Number.parseInt(rate.deliveryTimeMax ?? '', 10)
@@ -131,7 +134,7 @@ function ShippingCalculator({ productId, size }: { productId: number; size: stri
   )
 }
 
-function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, selectedView, currentUser, currency, usdArsRate, onBack, onSelectRelated, onSizeChange, onViewChange, onAddToCart, onRequestLogin, onOpenContact }: ProductDetailProps) {
+function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, selectedView, currentUser, shipping, currency, usdArsRate, onBack, onSelectRelated, onSizeChange, onViewChange, onAddToCart, onRequestLogin, onOpenContact }: ProductDetailProps) {
   const [isGalleryHovering, setIsGalleryHovering] = useState(false)
   const [reviewResult, setReviewResult] = useState<{ slug: string; reviews: ProductReview[] } | null>(null)
   const [zoomOrigin, setZoomOrigin] = useState<string | null>(null)
@@ -139,6 +142,9 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
   const [reviewComment, setReviewComment] = useState('')
   const [reviewMessage, setReviewMessage] = useState('')
   const [isSubmittingReview, setIsSubmittingReview] = useState(false)
+  const [restockEntry, setRestockEntry] = useState({ key: '', email: '' })
+  const [restockResult, setRestockResult] = useState<{ key: string; message: string } | null>(null)
+  const [isSubmittingRestock, setIsSubmittingRestock] = useState(false)
 
   const baseViews = product.gallery && product.gallery.length > 0 ? [...product.gallery] : [{ src: getProductImage(product), alt: product.alt, label: 'Vista principal' }]
   const views = [...baseViews]
@@ -157,6 +163,27 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
       onViewChange(0)
     }
   }, [selectedView, views.length, onViewChange])
+
+  const restockKey = `${product.slug}:${selectedSize}`
+  const restockEmail = restockEntry.key === restockKey ? restockEntry.email : currentUser?.email ?? ''
+  const restockMessage = restockResult?.key === restockKey ? restockResult.message : ''
+
+  const requestRestockNotification = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setIsSubmittingRestock(true)
+    setRestockResult(null)
+    try {
+      const result = await apiRequest<{ message: string }>(`/api/products/${encodeURIComponent(product.slug)}/restock-notifications`, {
+        method: 'POST',
+        body: JSON.stringify({ email: restockEmail, size: selectedSize }),
+      })
+      setRestockResult({ key: restockKey, message: result.message })
+    } catch (requestError) {
+      setRestockResult({ key: restockKey, message: requestError instanceof Error ? requestError.message : 'No se pudo registrar el aviso.' })
+    } finally {
+      setIsSubmittingRestock(false)
+    }
+  }
 
   useEffect(() => {
     if (views.length <= 1 || isGalleryHovering) return
@@ -280,7 +307,16 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
             <p className="product-detail__size-note">La equivalencia puede variar según el calce de la prenda.</p>
           </div>
           )}
-          {!product.isGiftCard && <ShippingCalculator productId={product.id} size={selectedSize} />}
+          {!product.isGiftCard && getStockForSize(product, selectedSize) <= 0 && (
+            <form className="restock-alert" onSubmit={requestRestockNotification}>
+              <h2>¿Te avisamos cuando vuelva?</h2>
+              <p>Te enviaremos un correo cuando el talle {selectedSize} esté disponible.</p>
+              <label><span>Correo electrónico</span><input required type="email" maxLength={254} autoComplete="email" value={restockEmail} onChange={(event) => setRestockEntry({ key: restockKey, email: event.target.value })} /></label>
+              <button className="button button--dark" type="submit" disabled={isSubmittingRestock}>{isSubmittingRestock ? 'Registrando…' : 'Avisarme por email'}</button>
+              {restockMessage && <p className="restock-alert__message" role="status">{restockMessage}</p>}
+            </form>
+          )}
+          {!product.isGiftCard && <ShippingCalculator productId={product.id} size={selectedSize} priceArs={getSalePrice(product)} shipping={shipping} currency={currency} usdArsRate={usdArsRate} />}
           <button className="button button--coral product-detail__add" type="button" onClick={onAddToCart} disabled={getStockForSize(product, selectedSize) <= 0 || (product.isGiftCard === true && !isValidGiftCardAmount(selectedSize))}>Añadir a la bolsa <ShoppingBag size={17} aria-hidden="true" /></button>
           <p className="product-detail__note">¿Necesitas ayuda para elegir? <button type="button" onClick={onOpenContact}>Escríbenos</button></p>
         </div>
@@ -478,8 +514,11 @@ const readRecentlyViewed = (): string[] => {
   }
 }
 
+const normalizeSearchText = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es')
+
 function App() {
   const [products, setProducts] = useState<Product[]>(() => initialProducts.map(normalizeProductFacets))
+  const showcaseProducts = products.filter((product) => !product.isGiftCard && getProductImage(product, 1))
   const [currentUser, setCurrentUser] = useState<AccountUser | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [isAccountPage, setIsAccountPage] = useState(() => new URLSearchParams(window.location.search).get('cuenta') === '1')
@@ -664,23 +703,6 @@ function App() {
   const visibleCount = pagination.key === filterKey ? pagination.count : productsPerPage
   const setVisibleCount = (update: (count: number) => number) => setPagination({ key: filterKey, count: update(visibleCount) })
 
-  const searchSuggestions = (() => {
-    const normalize = (text: string) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es')
-    const terms = normalize(searchQuery).trim().split(/\s+/).filter(Boolean)
-    if (!terms.length) return []
-    return products
-      .map((product) => {
-        const name = normalize(product.name)
-        const rest = normalize(`${product.category} ${product.features.join(' ')}`)
-        if (!terms.every((term) => name.includes(term) || rest.includes(term))) return null
-        return { product, score: terms.every((term) => name.includes(term)) ? (name.startsWith(terms[0]) ? 0 : 1) : 2 }
-      })
-      .filter((entry): entry is { product: Product; score: number } => entry !== null)
-      .sort((a, b) => a.score - b.score)
-      .slice(0, 6)
-      .map((entry) => entry.product)
-  })()
-
   const visibleProducts = products
     .filter((product) => {
       const matchesCategory = activeCategory === 'Todo' || product.category === activeCategory
@@ -698,6 +720,22 @@ function App() {
       if (sortOrder === 'popular') return (second.sold ?? 0) - (first.sold ?? 0) || first.id - second.id
       return first.id - second.id
     })
+  const normalizedQuery = normalizeSearchText(searchQuery.trim())
+  const searchSuggestions = normalizedQuery
+    ? products
+      .filter((product) => {
+        const searchableText = normalizeSearchText(`${product.name} ${product.category} ${product.features.join(' ')}`)
+        return normalizedQuery.split(/\s+/).every((term) =>
+          searchableText.includes(term) || searchableText.split(/\s+/).some((word) => word.startsWith(term)),
+        )
+      })
+      .sort((first, second) => {
+        const firstName = normalizeSearchText(first.name)
+        const secondName = normalizeSearchText(second.name)
+        return Number(!firstName.startsWith(normalizedQuery)) - Number(!secondName.startsWith(normalizedQuery)) || first.id - second.id
+      })
+      .slice(0, 6)
+    : []
   const activeFilterCount = Number(cutFilter !== 'Todas') + Number(audienceFilter !== 'Todos') + Number(genderFilter !== 'Todos')
 
   const cartItems = Object.entries(cart).flatMap(([cartKey, quantity]) => {
@@ -982,14 +1020,39 @@ function App() {
           <div className="header-actions">
             <div className={`search-box${isSearchOpen ? ' is-open' : ''}`}>
               <Search className="search-box__icon" size={17} strokeWidth={1.8} aria-hidden="true" />
-              <input type="search" placeholder="Buscar prendas" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setIsSuggestionsOpen(true) }} onFocus={() => setIsSuggestionsOpen(true)} onBlur={() => window.setTimeout(() => setIsSuggestionsOpen(false), 150)} onKeyDown={(event) => { if (event.key === 'Escape') setIsSuggestionsOpen(false); if (event.key === 'Enter') { setIsSuggestionsOpen(false); document.getElementById('coleccion')?.scrollIntoView({ behavior: 'smooth' }) } }} aria-label="Buscar prendas" autoComplete="off" />
-              {isSuggestionsOpen && searchSuggestions.length > 0 && (
-                <ul className="search-suggestions" aria-label="Sugerencias de búsqueda">
-                  {searchSuggestions.map((product) => (
-                    <li key={product.id}><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { setIsSuggestionsOpen(false); setSearchQuery(''); navigateToProduct(product) }}><span>{product.name}</span><small>{product.category}</small></button></li>
-                  ))}
-                </ul>
-              )}
+              <input
+                type="search"
+                placeholder="Buscar prendas"
+                value={searchQuery}
+                onChange={(event) => { setSearchQuery(event.target.value); setIsSuggestionsOpen(true) }}
+                onFocus={() => setIsSuggestionsOpen(true)}
+                onBlur={() => window.setTimeout(() => setIsSuggestionsOpen(false), 150)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && searchSuggestions[0]) {
+                    event.preventDefault()
+                    navigateToProduct(searchSuggestions[0])
+                    setSearchQuery('')
+                    setIsSuggestionsOpen(false)
+                    setIsSearchOpen(false)
+                  } else if (event.key === 'Escape') {
+                    setSearchQuery('')
+                    setIsSuggestionsOpen(false)
+                  }
+                }}
+                aria-label="Buscar prendas"
+                aria-autocomplete="list"
+                aria-controls="global-search-suggestions"
+                aria-expanded={Boolean(isSuggestionsOpen && searchQuery.trim())}
+              />
+              {isSuggestionsOpen && searchQuery.trim() && <div className="search-suggestions" id="global-search-suggestions" role="listbox" aria-label="Sugerencias de productos">
+                {searchSuggestions.length ? searchSuggestions.map((product) => (
+                  <button className="search-suggestion" key={product.id} type="button" role="option" aria-selected="false" onMouseDown={(event) => event.preventDefault()} onClick={() => { navigateToProduct(product); setSearchQuery(''); setIsSuggestionsOpen(false); setIsSearchOpen(false) }}>
+                    <img src={getProductImage(product)} alt="" />
+                    <span><strong>{product.name}</strong><small>{product.category}</small></span>
+                    <span className="search-suggestion__price">{formatPrice(getSalePrice(product), displayCurrency, usdArsRate)}</span>
+                  </button>
+                )) : <p className="search-suggestions__empty">No encontramos productos con ese nombre.</p>}
+              </div>}
               <button className="search-toggle" type="button" onClick={() => setIsSearchOpen((open) => !open)} aria-label={isSearchOpen ? 'Cerrar búsqueda' : 'Abrir búsqueda'} aria-expanded={isSearchOpen}><Search size={19} strokeWidth={1.8} aria-hidden="true" /></button>
             </div>
             <label className="currency-selector" title={exchangeSource ? `Cotización: ${exchangeSource}` : 'Tipo de cambio USD no disponible'}><select value={displayCurrency} onChange={(event) => toggleDisplayCurrency(event.target.value)} aria-label="Moneda de visualización"><option value="ARS">ARS $</option><option value="USD" disabled={!usdArsRate}>USD $</option></select></label>
@@ -1029,6 +1092,7 @@ function App() {
             selectedSize={selectedSizes[activeProduct.id] ?? getDefaultSize(activeProduct)}
             selectedView={selectedProductViews[activeProduct.id] ?? 0}
             currentUser={currentUser}
+            shipping={storeConfig?.shipping ?? null}
             currency={displayCurrency}
             usdArsRate={usdArsRate}
             onBack={() => navigateToProduct(null)}
@@ -1042,7 +1106,7 @@ function App() {
         ) : (
           <>
         <section className="hero" aria-labelledby="hero-title">
-          <img className="hero__image" src={getProductImage(initialProducts[0], 1)} alt="Espalda de la camiseta Mind Unfiltered con su ilustración original" />
+          {showcaseProducts[0] && <img className="hero__image" src={getProductImage(showcaseProducts[0], 1)} alt={`Espalda de ${showcaseProducts[0].name}`} />}
           <div className="hero__veil" />
           <div className="hero__content">
             <p className="eyebrow hero__eyebrow"><span /> Diseñada desde la experiencia neurodivergente</p>
@@ -1120,7 +1184,7 @@ function App() {
         </section>
 
         <section className="story-section" id="historia">
-          <div className="story-image-wrap"><img src={getProductImage(initialProducts[1], 1)} alt="Espalda de la camiseta No Molestar con su diseño original" loading="lazy" /><span className="story-image-label">UNFOCUS · A TU RITMO</span></div>
+          <div className="story-image-wrap">{(showcaseProducts[1] ?? showcaseProducts[0]) && <img src={getProductImage(showcaseProducts[1] ?? showcaseProducts[0], 1)} alt={`Espalda de ${(showcaseProducts[1] ?? showcaseProducts[0]).name}`} loading="lazy" />}<span className="story-image-label">UNFOCUS · A TU RITMO</span></div>
           <div className="story-copy"><p className="eyebrow">La comodidad también es personal</p><h2>Tu forma de sentir<br />es <em>la medida.</em></h2><p>La textura, las costuras, el ajuste y las etiquetas importan. Por eso describimos cada prenda con claridad: para que puedas decidir cómo se sentirá antes de que llegue a casa. Sin reglas sobre cómo vestirte. Sin prisa.</p><a className="text-link" href="#coleccion">Encuentra tu comodidad <ArrowUpRight size={17} aria-hidden="true" /></a><span className="story-scribble" aria-hidden="true">sé tú, a tu ritmo</span></div>
         </section>
 
