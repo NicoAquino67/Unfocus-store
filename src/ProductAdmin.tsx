@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowLeft, Check, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import AdminCoupons from './AdminCoupons'
 import AdminGiftCards from './AdminGiftCards'
-import { apiRequest, type AdminOrder, type AdminSummary, type ContactMessage, type NewsletterSubscriber, type OrderStatus, type StoreSettings } from './api'
+import { apiRequest, type AdminOrder, type AdminReport, type AdminSummary, type ContactMessage, type NewsletterSubscriber, type OrderStatus, type StoreSettings } from './api'
 import { formatPrice, getSalePrice, hasDiscount, getProductFacets, getProductImage, garmentCuts, productAudiences, productGenders, productFacetTag, sizes, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
 import './ProductAdmin.css'
 
@@ -114,6 +114,16 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
   const [correoStatus, setCorreoStatus] = useState<{ configured: boolean; missing: string[]; environment: string } | null>(null)
   const [correoBusyId, setCorreoBusyId] = useState<number | null>(null)
   const [miCorreoStatus, setMiCorreoStatus] = useState<{ configured: boolean; missing: string[]; environment: string } | null>(null)
+  const [reportDays, setReportDays] = useState(30)
+  const [report, setReport] = useState<AdminReport | null>(null)
+
+  useEffect(() => {
+    let isCurrent = true
+    apiRequest<AdminReport>(`/api/admin/reports?days=${reportDays}`)
+      .then((result) => { if (isCurrent) setReport(result) })
+      .catch(() => undefined)
+    return () => { isCurrent = false }
+  }, [reportDays])
 
   useEffect(() => {
     let isCurrent = true
@@ -359,6 +369,34 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
           <div className="admin-card"><span>Pendientes</span><strong>{summary?.pending ?? 0}</strong></div>
           <div className="admin-card"><span>Pagados</span><strong>{summary?.paid ?? 0}</strong></div>
           <div className="admin-card"><span>Inventario</span><strong>{formatPrice(inventoryValue)}</strong></div>
+        </section>
+      )}
+
+      {!draft && report && (
+        <section className="admin-reports" aria-labelledby="reports-title">
+          <div className="admin-reports__heading">
+            <h2 id="reports-title">Reportes</h2>
+            <label>Período <select value={reportDays} onChange={(event) => setReportDays(Number(event.target.value))}><option value={7}>7 días</option><option value={30}>30 días</option><option value={90}>90 días</option></select></label>
+          </div>
+          <div className="admin-summary-grid">
+            <div className="admin-card"><span>Pedidos pagados</span><strong>{report.orders}</strong></div>
+            <div className="admin-card"><span>Ingresos</span><strong>{formatPrice(report.revenue)}</strong></div>
+            <div className="admin-card"><span>Ticket promedio</span><strong>{formatPrice(report.averageOrder)}</strong></div>
+          </div>
+          <div className="admin-reports__tables">
+            <div>
+              <h3>Más vendidos</h3>
+              {report.topProducts.length === 0 ? <p>Sin ventas en el período.</p> : <ul>{report.topProducts.map((item) => <li key={item.name}><span>{item.name}</span><strong>{item.units} u. · {formatPrice(item.revenue)}</strong></li>)}</ul>}
+            </div>
+            <div>
+              <h3>Stock bajo (≤ {report.lowStockThreshold} u.)</h3>
+              {report.lowStock.length === 0 ? <p>Todo el stock está por encima del mínimo.</p> : <ul>{report.lowStock.map((item) => <li key={`${item.productId}-${item.size}`}><span>{item.name} · talle {item.size}</span><strong>{item.stock === 0 ? 'Agotado' : `${item.stock} u.`}</strong></li>)}</ul>}
+            </div>
+            <div>
+              <h3>Ventas por día</h3>
+              {report.daily.length === 0 ? <p>Sin ventas en el período.</p> : <ul>{report.daily.map((item) => <li key={item.day}><span>{item.day}</span><strong>{item.orders} ped. · {formatPrice(item.revenue)}</strong></li>)}</ul>}
+            </div>
+          </div>
         </section>
       )}
 

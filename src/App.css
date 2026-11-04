@@ -447,3 +447,12 @@
 .checkout-form__transfer { padding: 12px; border: 1px solid var(--line); font-size: 13px; line-height: 1.5; }
 .checkout-form__transfer ol { margin: 6px 0; padding-left: 18px; }
 .checkout-form__transfer p { margin: 4px 0 0; color: #666; }
+
+.load-more { display: flex; justify-content: center; margin: 32px 0 8px; }
+.shipping-calculator { margin: 18px 0; padding: 14px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font: 12px var(--sans); color: var(--ink); }
+.shipping-calculator label { display: block; margin-bottom: 8px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.shipping-calculator form > div { display: flex; gap: 8px; }
+.shipping-calculator input { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); background: transparent; color: var(--ink); font: inherit; }
+.shipping-calculator button { padding: 10px 16px; border: 1px solid var(--ink); background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
+.shipping-calculator p { margin: 10px 0 0; line-height: 1.5; }
+.shipping-calculator__error { color: #9b2c2c; }

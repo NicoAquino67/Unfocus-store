@@ -8,6 +8,7 @@ import { MercadoPagoConfig, Preference } from 'mercadopago'
 import nodemailer from 'nodemailer'
 import { CorreoArgentinoError, buildOrderPayload, createCorreoArgentinoClient, readCorreoArgentinoConfig } from './correoArgentino.mjs'
 import { MiCorreoError, buildDimensions, buildImportPayload, createMiCorreoClient, readMiCorreoConfig } from './miCorreo.mjs'
+import { buildRobotsTxt, buildSitemapXml, injectProductMeta } from './seo.mjs'
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url))
 const projectDirectory = path.resolve(serverDirectory, '..')
@@ -1338,6 +1339,44 @@ app.get('/api/admin/summary', requireAdmin, (_request, response) => {
   })
 })
 
+const lowStockThreshold = 3
+
+app.get('/api/admin/reports', requireAdmin, (request, response) => {
+  const days = [7, 30, 90].includes(Number(request.query.days)) ? Number(request.query.days) : 30
+  const since = `-${days} days`
+  const totals = database.prepare(`
+    SELECT COUNT(*) AS orders, COALESCE(SUM(total_ars), 0) AS revenue
+    FROM orders WHERE status IN ('paid', 'shipped', 'delivered') AND created_at >= datetime('now', ?)
+  `).get(since)
+  const daily = database.prepare(`
+    SELECT date(created_at) AS day, COUNT(*) AS orders, SUM(total_ars) AS revenue
+    FROM orders WHERE status IN ('paid', 'shipped', 'delivered') AND created_at >= datetime('now', ?)
+    GROUP BY day ORDER BY day DESC
+  `).all(since)
+  const topProducts = database.prepare(`
+    SELECT oi.product_name AS name, SUM(oi.quantity) AS units, SUM(oi.quantity * oi.unit_price_ars) AS revenue
+    FROM order_items oi JOIN orders o ON o.id = oi.order_id
+    WHERE o.status IN ('paid', 'shipped', 'delivered') AND o.created_at >= datetime('now', ?)
+    GROUP BY oi.product_name ORDER BY units DESC, revenue DESC LIMIT 10
+  `).all(since)
+  const lowStock = allProducts.all().map(productFromRow)
+    .filter((product) => !product.isGiftCard)
+    .flatMap((product) => Object.entries(product.stockBySize)
+      .filter(([, stock]) => Number(stock) <= lowStockThreshold)
+      .map(([size, stock]) => ({ productId: product.id, name: product.name, size, stock: Number(stock) })))
+    .sort((a, b) => a.stock - b.stock || a.name.localeCompare(b.name))
+  response.json({
+    days,
+    orders: Number(totals.orders),
+    revenue: Number(totals.revenue),
+    averageOrder: totals.orders ? Math.round(Number(totals.revenue) / Number(totals.orders)) : 0,
+    daily: daily.map((row) => ({ day: row.day, orders: Number(row.orders), revenue: Number(row.revenue) })),
+    topProducts: topProducts.map((row) => ({ name: row.name, units: Number(row.units), revenue: Number(row.revenue) })),
+    lowStock,
+    lowStockThreshold,
+  })
+})
+
 app.get('/api/admin/orders', requireAdmin, (_request, response) => {
   const orderRows = database.prepare(`
     SELECT o.*, u.name AS user_name, u.email AS user_email
@@ -1742,8 +1781,18 @@ app.use((error, _request, response, _next) => {
 })
 
 if (isProduction) {
-  app.use(express.static(path.join(projectDirectory, 'dist')))
-  app.get(/^(?!\/api\/).*/, (_request, response) => response.sendFile(path.join(projectDirectory, 'dist', 'index.html')))
+  const indexHtmlPath = path.join(projectDirectory, 'dist', 'index.html')
+  const seoBaseUrl = publicBaseUrl.replace(/\/$/, '')
+  const legalPageSlugs = ['terminos', 'privacidad', 'cambios', 'arrepentimiento', 'defensa', 'baja', 'faq']
+  app.get('/robots.txt', (_request, response) => response.type('text/plain').send(buildRobotsTxt(seoBaseUrl)))
+  app.get('/sitemap.xml', (_request, response) => response.type('application/xml').send(buildSitemapXml(seoBaseUrl, allProducts.all().map(productFromRow), legalPageSlugs)))
+  app.use(express.static(path.join(projectDirectory, 'dist'), { index: false }))
+  app.get(/^(?!\/api\/).*/, async (request, response) => {
+    const slug = typeof request.query.producto === 'string' ? request.query.producto : ''
+    const row = slug ? selectProductBySlug.get(slug) : null
+    if (!row) return response.sendFile(indexHtmlPath)
+    response.type('html').send(injectProductMeta(await readFile(indexHtmlPath, 'utf8'), seoBaseUrl, productFromRow(row)))
+  })
 }
 
 await new Promise((resolve) => app.listen(port, '0.0.0.0', resolve))

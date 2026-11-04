@@ -1,4 +1,4 @@
-﻿UnFocus · Checklist (comparativa con nike.com)
+UnFocus · Checklist (comparativa con nike.com)
 
 Leyenda: [x] hecho · [~] hecho en código, requiere acción tuya · [ ] pendiente
 
@@ -120,7 +120,7 @@ Descubrimiento
 [ ] Buscador global con sugerencias
 [ ] Categorías y navegación por menús (hombre / mujer / niños / novedades / ofertas)
 [x] Ordenar por precio, novedad y popularidad
-[ ] Paginación o carga infinita
+[x] Paginación o carga infinita
 [ ] Colores y variantes de producto
 [ ] Productos relacionados y "completa el look"
 [x] Vistos recientemente
@@ -129,8 +129,8 @@ Descubrimiento
 Ficha de producto
 [x] Zoom y más imágenes por producto (3 a 10; video pendiente)
 [ ] Aviso "volver a tener stock" por email
-[ ] Calculadora de envío por código postal en la ficha
-[ ] Estimación de fecha de entrega
+[x] Calculadora de envío por código postal en la ficha
+[x] Estimación de fecha de entrega
 [x] Preguntas y respuestas
 
 Checkout
@@ -148,14 +148,14 @@ Cuenta y fidelización
 [ ] Comprobante / factura electrónica (AFIP)
 
 Marketing y SEO
-[ ] SEO: meta tags por producto, sitemap, datos estructurados, URLs limpias
+[x] SEO: meta tags por producto, sitemap, datos estructurados (las URLs limpias siguen pendientes: hoy son ?producto=slug)
 [ ] Analítica (GA4 / Meta Pixel) con aviso de cookies
 [ ] Newsletter con campañas (hoy solo se guardan suscriptores)
 [ ] Integración con redes sociales / Instagram shop
 
 Operación y calidad
 [ ] Roles de administración con permisos y registro de auditoría
-[ ] Reportes de ventas y stock bajo
+[x] Reportes de ventas y stock bajo
 [ ] Importación/exportación de catálogo (CSV)
 [ ] Multi-idioma y multi-moneda de cobro
 [ ] Tests automatizados (hoy solo lint y build)

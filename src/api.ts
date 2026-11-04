@@ -29,6 +29,17 @@ export type ShippingDetails = {
   rateType?: string
 }
 
+export type AdminReport = {
+  days: number
+  orders: number
+  revenue: number
+  averageOrder: number
+  daily: { day: string; orders: number; revenue: number }[]
+  topProducts: { name: string; units: number; revenue: number }[]
+  lowStock: { productId: number; name: string; size: string; stock: number }[]
+  lowStockThreshold: number
+}
+
 export type ShippingRate = {
   deliveredType: string
   productType: string

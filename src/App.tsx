@@ -22,7 +22,7 @@ import unfocusLogo from '../ident/png full color.png'
 import unfocusLogoWhite from '../ident/png blanco.png'
 import PriceTag from './PriceTag'
 import { categories, getSalePrice, formatPrice, getDefaultSize, getProductImage, getProductFacets, getStockForSize, giftCardAmounts, giftCardMaximum, giftCardMinimum, isValidGiftCardAmount, initialProducts, normalizeProductFacets, garmentCuts, productAudiences, productGenders, sizes, type CategoryFilter, type DisplayCurrency, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
-import { apiRequest, type AccountNotification, type AccountSummary, type AccountUser, type ProductReview, type StoreConfig } from './api'
+import { apiRequest, type AccountNotification, type AccountSummary, type AccountUser, type ProductReview, type ShippingRate, type StoreConfig } from './api'
 import AccountPanel from './AccountPanel'
 import ProductAdmin from './ProductAdmin'
 import CheckoutForm, { type CheckoutPayload } from './CheckoutForm'
@@ -66,6 +66,69 @@ const garmentMeasurements: Record<string, { chest: number; length: number }> = {
   XL: { chest: 60, length: 75 },
   '2XL': { chest: 63, length: 77 },
   '3XL': { chest: 66, length: 79 },
+}
+
+const productsPerPage = 12
+
+const addBusinessDays = (days: number) => {
+  const date = new Date()
+  let remaining = days
+  while (remaining > 0) {
+    date.setDate(date.getDate() + 1)
+    if (date.getDay() !== 0 && date.getDay() !== 6) remaining -= 1
+  }
+  return date
+}
+
+const formatDeliveryDate = (date: Date) => date.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })
+
+function ShippingCalculator({ productId, size }: { productId: number; size: string }) {
+  const [postalCode, setPostalCode] = useState(() => window.localStorage.getItem('unfocus-postal-code') ?? '')
+  const [state, setState] = useState<{ status: 'idle' | 'loading' | 'done' | 'error'; rates: ShippingRate[]; available: boolean; message: string }>({ status: 'idle', rates: [], available: true, message: '' })
+
+  const calculate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const digits = postalCode.replace(/\D/g, '').slice(0, 4)
+    if (digits.length !== 4) {
+      setState({ status: 'error', rates: [], available: true, message: 'Ingresa un código postal de 4 dígitos.' })
+      return
+    }
+    window.localStorage.setItem('unfocus-postal-code', digits)
+    setState({ status: 'loading', rates: [], available: true, message: '' })
+    try {
+      const result = await apiRequest<{ available: boolean; rates: ShippingRate[] }>('/api/shipping/quote', { method: 'POST', body: JSON.stringify({ items: [{ productId, size, quantity: 1 }], postalCode: digits }) })
+      setState({ status: 'done', rates: result.rates, available: result.available, message: '' })
+    } catch (error) {
+      setState({ status: 'error', rates: [], available: true, message: error instanceof Error ? error.message : 'No pudimos calcular el envío.' })
+    }
+  }
+
+  return (
+    <div className="shipping-calculator">
+      <form onSubmit={calculate}>
+        <label htmlFor="shipping-calculator-postal">Calcular envío</label>
+        <div>
+          <input id="shipping-calculator-postal" inputMode="numeric" maxLength={8} placeholder="Código postal" value={postalCode} onChange={(event) => setPostalCode(event.target.value)} autoComplete="postal-code" />
+          <button type="submit" disabled={state.status === 'loading'}>{state.status === 'loading' ? 'Calculando…' : 'Calcular'}</button>
+        </div>
+      </form>
+      <div aria-live="polite">
+        {state.status === 'error' && <p className="shipping-calculator__error">{state.message}</p>}
+        {state.status === 'done' && !state.available && <p>El costo y el plazo exactos se muestran al finalizar la compra.</p>}
+        {state.status === 'done' && state.rates.map((rate) => {
+          const min = Number.parseInt(rate.deliveryTimeMin ?? '', 10)
+          const max = Number.parseInt(rate.deliveryTimeMax ?? '', 10)
+          const hasEstimate = Number.isFinite(max)
+          return (
+            <p key={`${rate.deliveredType}-${rate.productType}`}>
+              <strong>{rate.productName}: {rate.priceArs.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 })}</strong>
+              {hasEstimate && <span> · Llega entre el {formatDeliveryDate(addBusinessDays(Number.isFinite(min) ? min : max))} y el {formatDeliveryDate(addBusinessDays(max))}</span>}
+            </p>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, selectedView, currentUser, currency, usdArsRate, onBack, onSelectRelated, onSizeChange, onViewChange, onAddToCart, onRequestLogin, onOpenContact }: ProductDetailProps) {
@@ -217,6 +280,7 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
             <p className="product-detail__size-note">La equivalencia puede variar según el calce de la prenda.</p>
           </div>
           )}
+          {!product.isGiftCard && <ShippingCalculator productId={product.id} size={selectedSize} />}
           <button className="button button--coral product-detail__add" type="button" onClick={onAddToCart} disabled={getStockForSize(product, selectedSize) <= 0 || (product.isGiftCard === true && !isValidGiftCardAmount(selectedSize))}>Añadir a la bolsa <ShoppingBag size={17} aria-hidden="true" /></button>
           <p className="product-detail__note">¿Necesitas ayuda para elegir? <button type="button" onClick={onOpenContact}>Escríbenos</button></p>
         </div>
@@ -447,6 +511,7 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(false)
+  const [pagination, setPagination] = useState({ key: '', count: productsPerPage })
   const [sortOrder, setSortOrder] = useState('featured')
   const [selectedSizes, setSelectedSizes] = useState<Record<number, string>>({})
   const [selectedProductViews, setSelectedProductViews] = useState<Record<number, number>>({})
@@ -593,6 +658,11 @@ function App() {
     const product = products.find((item) => item.slug === selectedProductSlug)
     document.title = isAdminPage ? 'Panel de control | UnFocus' : isAccountPage ? 'Mi cuenta | UnFocus' : isContactPage ? 'Contacto | UnFocus' : legalPage ? `${legalPageTitles[legalPage]} | UnFocus` : product ? `${product.name} | UnFocus` : 'UnFocus Mall — Seeking clarity. Embrace yourself.'
   }, [isAccountPage, isAdminPage, isContactPage, legalPage, products, selectedProductSlug])
+
+  // El contador se reinicia solo cuando cambian filtros, búsqueda u orden.
+  const filterKey = [activeCategory, cutFilter, audienceFilter, genderFilter, searchQuery, sortOrder].join('|')
+  const visibleCount = pagination.key === filterKey ? pagination.count : productsPerPage
+  const setVisibleCount = (update: (count: number) => number) => setPagination({ key: filterKey, count: update(visibleCount) })
 
   const searchSuggestions = (() => {
     const normalize = (text: string) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es')
@@ -1040,12 +1110,13 @@ function App() {
           </div>
           {visibleProducts.length > 0 ? (
             <div className="product-grid">
-              {visibleProducts.map((product, index) => <ProductCard key={product.id} product={product} index={index} isFavorite={favorites.includes(product.id)} selectedSize={selectedSizes[product.id] ?? getDefaultSize(product)} currency={displayCurrency} usdArsRate={usdArsRate} onOpenProduct={navigateToProduct} onToggleFavorite={toggleFavorite} onAddToCart={addToCart} onSizeChange={(size) => setSelectedSizes((current) => ({ ...current, [product.id]: size }))} />)}
+              {visibleProducts.slice(0, visibleCount).map((product, index) => <ProductCard key={product.id} product={product} index={index} isFavorite={favorites.includes(product.id)} selectedSize={selectedSizes[product.id] ?? getDefaultSize(product)} currency={displayCurrency} usdArsRate={usdArsRate} onOpenProduct={navigateToProduct} onToggleFavorite={toggleFavorite} onAddToCart={addToCart} onSizeChange={(size) => setSelectedSizes((current) => ({ ...current, [product.id]: size }))} />)}
             </div>
           ) : (
             <div className="empty-results"><Search size={23} strokeWidth={1.5} aria-hidden="true" /><p>No encontramos prendas con esos filtros.</p><button type="button" onClick={() => { setSearchQuery(''); setActiveCategory('Todo'); setCutFilter('Todas'); setAudienceFilter('Todos'); setGenderFilter('Todos') }}>Ver todas las prendas</button></div>
           )}
-          <div className="collection-footnote"><span>{visibleProducts.length} prendas</span><span>Comodidad descrita con claridad</span></div>
+          {visibleProducts.length > visibleCount && <div className="load-more"><button className="button" type="button" onClick={() => setVisibleCount((count) => count + productsPerPage)}>Ver más prendas ({visibleProducts.length - visibleCount} restantes)</button></div>}
+          <div className="collection-footnote"><span>{Math.min(visibleCount, visibleProducts.length)} de {visibleProducts.length} prendas</span><span>Comodidad descrita con claridad</span></div>
         </section>
 
         <section className="story-section" id="historia">
