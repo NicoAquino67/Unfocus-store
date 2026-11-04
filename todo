@@ -58,7 +58,7 @@ A. MVP PARA SALIR A PRODUCCIÓN Y VENDER
 
 Catálogo y tienda
 [x] Catálogo con fichas de producto, galería frente/espalda y descripción
-[ ] la herramienta de busqueda deberia de desplegar una lista con los productos que el usuario busca por su nombre, o similar
+[x] la herramienta de busqueda deberia de desplegar una lista con los productos que el usuario busca por su nombre, o similar
 [x] Filtros por corte, público, género y promociones
 [x] Stock por talle, con reserva al crear el pedido y liberación al cancelar
 [x] Guía de talles con equivalencia argentina y tabla de medidas
@@ -108,8 +108,8 @@ Despliegue
 [ ] Elegir hosting con almacenamiento persistente (SQLite + uploads) y HTTPS
 [ ] Variables de producción: NODE_ENV=production, PUBLIC_BASE_URL, ADMIN_EMAIL/ADMIN_PASSWORD, credenciales de Mercado Pago de producción
 [ ] Quitar MP_WEBHOOK_URL en producción (se usa PUBLIC_BASE_URL/api/payments/webhook)
-[ ] Dominio y certificado (unfocus.shop)
-[ ] Backups automáticos de la base de datos en producción
+[X] Dominio y certificado (unfocus.shop)
+[X] Backups automáticos de la base de datos en producción
 [x] Subir el repositorio a GitHub
 
 ========================================
@@ -163,7 +163,7 @@ Operación y calidad
 [ ] Migrar de SQLite a PostgreSQL si crece el volumen
 [ ] Páginas de ayuda / FAQ y chat de soporte
 
-- [x] Cancelación automática de pedidos pendientes de pago tras 3 días (PENDING_ORDER_EXPIRY_DAYS)
+[x] Cancelación automática de pedidos pendientes de pago tras 3 días (PENDING_ORDER_EXPIRY_DAYS)
 [x] Descuentos por producto (porcentual o en ARS) sin alterar el precio original
 [x] Galería de imágenes del admin en un único panel
 

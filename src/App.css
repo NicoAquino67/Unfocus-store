@@ -17,7 +17,11 @@
 .main-nav a, .footer-links a { color: var(--ink); text-decoration: none; font-size: 12px; transition: color .2s ease; }
 .main-nav a:hover, .footer-links a:hover { color: var(--coral); }
 .header-actions { display: flex; justify-content: flex-end; align-items: center; gap: 20px; }
-.search-box { width: 150px; display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); color: var(--ink-soft); }
+.search-box { position: relative; width: 150px; display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); color: var(--ink-soft); }
+.search-suggestions { position: absolute; top: 100%; right: 0; z-index: 20; width: max(100%, 260px); margin: 4px 0 0; padding: 4px 0; list-style: none; border: 1px solid var(--line); background: var(--paper); box-shadow: 0 10px 24px rgba(0, 0, 0, .12); }
+.search-suggestions button { display: flex; width: 100%; justify-content: space-between; gap: 12px; align-items: baseline; padding: 10px 14px; border: 0; background: transparent; color: var(--ink); font: 12px var(--sans); text-align: left; cursor: pointer; }
+.search-suggestions button:hover, .search-suggestions button:focus-visible { background: rgba(0, 0, 0, .05); }
+.search-suggestions small { color: var(--ink-soft); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
 .search-box input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: 11px var(--sans); }
 .search-box input::placeholder { color: #566260; }
 .search-toggle { display: none; }
@@ -356,6 +360,7 @@
   .search-box__icon { display: none; }
   .search-box input { position: absolute; top: 66px; right: 4%; left: 4%; z-index: 4; display: none; width: 92%; padding: 12px; border: 1px solid var(--line); background: var(--paper); }
   .search-box.is-open input { display: block; }
+  .search-suggestions { top: 118px; right: 4%; left: 4%; width: auto; }
   .search-toggle { display: grid; place-items: center; width: 30px; height: 32px; border: 0; background: transparent; color: var(--ink); cursor: pointer; }
   .bag-trigger { gap: 6px; }
   .bag-trigger > span:not(.bag-count) { display: none; }

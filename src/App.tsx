@@ -446,6 +446,7 @@ function App() {
   const [genderFilter, setGenderFilter] = useState<ProductGender | 'Todos'>('Todos')
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(false)
   const [sortOrder, setSortOrder] = useState('featured')
   const [selectedSizes, setSelectedSizes] = useState<Record<number, string>>({})
   const [selectedProductViews, setSelectedProductViews] = useState<Record<number, number>>({})
@@ -592,6 +593,23 @@ function App() {
     const product = products.find((item) => item.slug === selectedProductSlug)
     document.title = isAdminPage ? 'Panel de control | UnFocus' : isAccountPage ? 'Mi cuenta | UnFocus' : isContactPage ? 'Contacto | UnFocus' : legalPage ? `${legalPageTitles[legalPage]} | UnFocus` : product ? `${product.name} | UnFocus` : 'UnFocus Mall — Seeking clarity. Embrace yourself.'
   }, [isAccountPage, isAdminPage, isContactPage, legalPage, products, selectedProductSlug])
+
+  const searchSuggestions = (() => {
+    const normalize = (text: string) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es')
+    const terms = normalize(searchQuery).trim().split(/\s+/).filter(Boolean)
+    if (!terms.length) return []
+    return products
+      .map((product) => {
+        const name = normalize(product.name)
+        const rest = normalize(`${product.category} ${product.features.join(' ')}`)
+        if (!terms.every((term) => name.includes(term) || rest.includes(term))) return null
+        return { product, score: terms.every((term) => name.includes(term)) ? (name.startsWith(terms[0]) ? 0 : 1) : 2 }
+      })
+      .filter((entry): entry is { product: Product; score: number } => entry !== null)
+      .sort((a, b) => a.score - b.score)
+      .slice(0, 6)
+      .map((entry) => entry.product)
+  })()
 
   const visibleProducts = products
     .filter((product) => {
@@ -894,7 +912,14 @@ function App() {
           <div className="header-actions">
             <div className={`search-box${isSearchOpen ? ' is-open' : ''}`}>
               <Search className="search-box__icon" size={17} strokeWidth={1.8} aria-hidden="true" />
-              <input type="search" placeholder="Buscar prendas" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); document.getElementById('coleccion')?.scrollIntoView({ behavior: 'smooth' }) }} aria-label="Buscar prendas" />
+              <input type="search" placeholder="Buscar prendas" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setIsSuggestionsOpen(true) }} onFocus={() => setIsSuggestionsOpen(true)} onBlur={() => window.setTimeout(() => setIsSuggestionsOpen(false), 150)} onKeyDown={(event) => { if (event.key === 'Escape') setIsSuggestionsOpen(false); if (event.key === 'Enter') { setIsSuggestionsOpen(false); document.getElementById('coleccion')?.scrollIntoView({ behavior: 'smooth' }) } }} aria-label="Buscar prendas" autoComplete="off" />
+              {isSuggestionsOpen && searchSuggestions.length > 0 && (
+                <ul className="search-suggestions" aria-label="Sugerencias de búsqueda">
+                  {searchSuggestions.map((product) => (
+                    <li key={product.id}><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { setIsSuggestionsOpen(false); setSearchQuery(''); navigateToProduct(product) }}><span>{product.name}</span><small>{product.category}</small></button></li>
+                  ))}
+                </ul>
+              )}
               <button className="search-toggle" type="button" onClick={() => setIsSearchOpen((open) => !open)} aria-label={isSearchOpen ? 'Cerrar búsqueda' : 'Abrir búsqueda'} aria-expanded={isSearchOpen}><Search size={19} strokeWidth={1.8} aria-hidden="true" /></button>
             </div>
             <label className="currency-selector" title={exchangeSource ? `Cotización: ${exchangeSource}` : 'Tipo de cambio USD no disponible'}><select value={displayCurrency} onChange={(event) => toggleDisplayCurrency(event.target.value)} aria-label="Moneda de visualización"><option value="ARS">ARS $</option><option value="USD" disabled={!usdArsRate}>USD $</option></select></label>
