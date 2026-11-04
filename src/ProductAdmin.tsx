@@ -115,7 +115,7 @@ const optimizeImage = async (file: File) => {
   context.fillStyle = '#eef1ef'
   context.fillRect(0, 0, canvas.width, canvas.height)
   context.drawImage(image, 0, 0, canvas.width, canvas.height)
-  return canvas.toDataURL('image/jpeg', 0.82)
+  return canvas.toDataURL('image/webp', 0.82)
 }
 
 const createSlug = (value: string) =>
@@ -512,7 +512,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
                 const label = index === 0 ? 'Frente' : index === 1 ? 'Espalda' : `Imagen ${index + 1}`
                 return (
                   <li className="admin-gallery__item" key={`${index}-${image.slice(-24)}`}>
-                    <img src={image} alt={`Vista previa: ${label}`} />
+                    <img src={image} alt={`Vista previa: ${label}`} width="112" height="128" />
                     <span className="admin-gallery__name">{label}</span>
                     <span className="admin-gallery__actions">
                       <label className="admin-gallery__button"><ImagePlus size={15} aria-hidden="true" /><span className="visually-hidden">Cambiar {label}</span><input className="visually-hidden" type="file" accept="image/*" disabled={processingImage} onChange={(event) => { void handleImages(Array.from(event.currentTarget.files ?? []), index); event.currentTarget.value = '' }} /></label>
@@ -538,7 +538,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
           <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th scope="col">Producto</th><th scope="col">Composición</th><th scope="col">Precio</th><th scope="col">Acciones</th></tr></thead><tbody>
             {filteredProducts.map((product) => (
               <tr key={product.id}>
-                <td><div className="admin-product-cell"><img src={getProductImage(product)} alt="" /><div><strong>{product.name}</strong><span>{product.category} · {product.gallery?.length ?? 0} vistas</span></div></div></td>
+                <td><div className="admin-product-cell"><img src={getProductImage(product)} alt="" width="55" height="64" /><div><strong>{product.name}</strong><span>{product.category} · {product.gallery?.length ?? 0} vistas</span></div></div></td>
                 <td>{product.composition}</td>
                 <td>{hasDiscount(product) ? <><s>{formatPrice(product.price)}</s> <strong>{formatPrice(getSalePrice(product))}</strong></> : formatPrice(product.price)}</td>
                 <td><div className="admin-row-actions">{pendingDeleteId === product.id ? <><span className="admin-confirm-label">¿Eliminar?</span><button className="admin-icon-button admin-icon-button--danger" type="button" onClick={() => { void confirmDelete(product.id) }} aria-label={`Confirmar eliminación de ${product.name}`} title="Confirmar eliminación"><Check size={16} /></button><button className="admin-icon-button" type="button" onClick={() => setPendingDeleteId(null)} aria-label="Cancelar eliminación" title="Cancelar"><X size={16} /></button></> : <><button className="admin-icon-button" type="button" disabled={!adminProductsLoaded} onClick={() => { const adminProduct = adminProducts.find((item) => item.id === product.id); setDraft(productToDraft(adminProduct ?? product)); setFormError('') }} aria-label={`Editar ${product.name}`} title="Editar"><Pencil size={16} /></button><button className="admin-icon-button admin-icon-button--danger" type="button" onClick={() => setPendingDeleteId(product.id)} aria-label={`Eliminar ${product.name}`} title="Eliminar"><Trash2 size={16} /></button></>}</div></td>

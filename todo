@@ -183,18 +183,18 @@ C. CONTROL DE CALIDAD DE LA PÁGINA (consejos de Hostinger)
 
 
 Móvil (puntuación actual entre paréntesis; 0 = crítico, 50 = mejorable, 94 = correcto)
-[ ] Avoid multiple page redirects: evitar redirecciones múltiples (http→https, www→raíz) (0)
-[ ] LCP request discovery: que la imagen principal (LCP) se descubra pronto en el HTML (preload, sin lazy-load, fetchpriority="high") (0)
+[ ] Avoid multiple page redirects: evitar redirecciones múltiples (http→https, www→raíz) (0; requiere configuración DNS/proxy del dominio)
+[x] LCP request discovery: preload de prioridad alta para hero y producto; fetchPriority alto en imagen principal (0)
 [ ] Render-blocking requests: eliminar CSS/JS que bloquean el renderizado inicial (0)
-[ ] Reduce unused JavaScript: dividir el bundle (code-splitting / import() dinámico; hoy ~620 kB) (0)
-[ ] Document request latency: reducir la latencia de la petición del documento (TTFB, compresión, caché) (0)
+[ ] Reduce unused JavaScript: paneles de cuenta, administración, legales y checkout con carga dinámica; bundle inicial en 519 kB (gzip 152 kB), aún supera 500 kB
+[ ] Document request latency: compresión gzip activada; falta medir TTFB real del documento tras desplegar (0)
 [ ] Network dependency tree: acortar las cadenas de peticiones encadenadas (preconnect, evitar imports en cascada) (0)
 [ ] Reduce unused CSS: eliminar o dividir el CSS no usado (0)
-[ ] Improve image delivery: formatos modernos (WebP/AVIF), tamaños responsivos (srcset) y compresión (50)
-[ ] Use efficient cache lifetimes: cabeceras Cache-Control largas para assets con hash, imágenes y fuentes (50)
-[ ] Image elements do not have explicit width and height: definir width y height en todas las <img> (evita saltos de layout) (50)
+[ ] Improve image delivery: las nuevas subidas se convierten a WebP; faltan derivados WebP/AVIF y tamaños responsivos para imágenes existentes (50)
+[x] Use efficient cache lifetimes: assets con hash y subidas UUID con caché de un año; HTML revalidable (50)
+[x] Image elements do not have explicit width and height: definir width y height en todas las <img> (evita saltos de layout) (50)
 [x] Hora de interactuar (Time to Interactive) (94)
-[ ] Volver a medir en móvil tras los cambios y revisar si Hostinger lista más consejos fuera de los ya incluidos
+[ ] Volver a medir en móvil tras desplegar los cambios y revisar si Hostinger lista más consejos fuera de los ya incluidos
 
 Desktop
 [ ] (pendiente: añadir aquí las mejoras de escritorio cuando se tengan los resultados)

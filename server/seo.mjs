@@ -8,6 +8,13 @@ const summarize = (text, max = 160) => {
   return clean.length > max ? `${clean.slice(0, max - 1).trimEnd()}…` : clean
 }
 
+export const injectImagePreload = (html, baseUrl, imageSrc) => {
+  if (!imageSrc) return html
+  const imageUrl = absoluteUrl(baseUrl, imageSrc)
+  const preload = `<link rel="preload" as="image" href="${escapeAttribute(imageUrl)}" fetchpriority="high" />`
+  return html.replace('</head>', () => `    ${preload}\n  </head>`)
+}
+
 export const buildRobotsTxt = (baseUrl) => `User-agent: *\nDisallow: /api/\nDisallow: /?admin=1\nDisallow: /?cuenta=1\n\nSitemap: ${baseUrl}/sitemap.xml\n`
 
 export const buildSitemapXml = (baseUrl, products, legalPages = []) => {
@@ -45,6 +52,7 @@ export const injectProductMeta = (html, baseUrl, product) => {
   const image = product.gallery[0]?.src ? absoluteUrl(baseUrl, product.gallery[0].src) : ''
   const jsonLd = JSON.stringify(buildProductJsonLd(baseUrl, product)).replace(/</g, '\\u003c')
   const tags = [
+    image ? `<link rel="preload" as="image" href="${escapeAttribute(image)}" fetchpriority="high" />` : '',
     `<link rel="canonical" href="${escapeAttribute(productUrl(baseUrl, product))}" />`,
     '<meta property="og:type" content="product" />',
     `<meta property="og:title" content="${escapeAttribute(title)}" />`,

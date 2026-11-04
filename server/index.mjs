@@ -4,11 +4,12 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
+import compression from 'compression'
 import { MercadoPagoConfig, Preference } from 'mercadopago'
 import nodemailer from 'nodemailer'
 import { CorreoArgentinoError, buildOrderPayload, createCorreoArgentinoClient, readCorreoArgentinoConfig } from './correoArgentino.mjs'
 import { MiCorreoError, buildDimensions, buildImportPayload, createMiCorreoClient, readMiCorreoConfig } from './miCorreo.mjs'
-import { buildRobotsTxt, buildSitemapXml, injectProductMeta } from './seo.mjs'
+import { buildRobotsTxt, buildSitemapXml, injectImagePreload, injectProductMeta } from './seo.mjs'
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url))
 const projectDirectory = path.resolve(serverDirectory, '..')
@@ -618,6 +619,7 @@ const applyRateLimit = (request, response, next, maxRequests = 20, windowMs = 60
 
 app.disable('x-powered-by')
 app.set('trust proxy', isProduction ? 1 : false)
+app.use(compression())
 app.use(express.json({ limit: '6mb', inflate: false }))
 app.use((request, response, next) => {
   const origin = request.get('origin')
@@ -958,12 +960,8 @@ app.put('/api/admin/products/:id', requireAdmin, async (request, response) => {
   if (!Number.isSafeInteger(id) || !selectProductById.get(id)) return response.status(404).json({ error: 'Producto no encontrado.' })
   try {
     const product = await requireProductBody(request.body)
-<<<<<<< HEAD
     updateProduct.run(product.slug, product.name, product.category, product.price, product.garmentCostArs, product.logisticsCostArs, product.productionCostArs, product.taxPercent, product.profitPercent, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue, id)
-=======
-    updateProduct.run(product.slug, product.name, product.category, product.price, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue, id)
     await notifyRestockedCustomers(id, product.name, product.stockBySize || {})
->>>>>>> 62b803b62cd6ac2ae1dcd899c8cd57c64003d00c
     response.json({ product: productFromRow(selectProductById.get(id)) })
   } catch (error) {
     response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un producto con ese enlace.' : error.message })
@@ -1957,12 +1955,24 @@ if (isProduction) {
   const legalPageSlugs = ['terminos', 'privacidad', 'cambios', 'arrepentimiento', 'defensa', 'baja', 'faq']
   app.get('/robots.txt', (_request, response) => response.type('text/plain').send(buildRobotsTxt(seoBaseUrl)))
   app.get('/sitemap.xml', (_request, response) => response.type('application/xml').send(buildSitemapXml(seoBaseUrl, allProducts.all().map(productFromRow), legalPageSlugs)))
-  app.use(express.static(path.join(projectDirectory, 'dist'), { index: false }))
+  app.use(express.static(path.join(projectDirectory, 'dist'), {
+    index: false,
+    setHeaders: (response, filePath) => {
+      if (path.basename(filePath) === 'index.html') {
+        response.setHeader('Cache-Control', 'no-cache')
+      } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+        response.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+      }
+    },
+  }))
   app.get(/^(?!\/api\/).*/, async (request, response) => {
     const slug = typeof request.query.producto === 'string' ? request.query.producto : ''
     const row = slug ? selectProductBySlug.get(slug) : null
-    if (!row) return response.sendFile(indexHtmlPath)
-    response.type('html').send(injectProductMeta(await readFile(indexHtmlPath, 'utf8'), seoBaseUrl, productFromRow(row)))
+    const html = await readFile(indexHtmlPath, 'utf8')
+    response.setHeader('Cache-Control', 'no-cache')
+    if (row) return response.type('html').send(injectProductMeta(html, seoBaseUrl, productFromRow(row)))
+    const hero = allProducts.all().map(productFromRow).find((product) => !product.isGiftCard && product.gallery[1]?.src)
+    response.type('html').send(hero ? injectImagePreload(html, seoBaseUrl, hero.gallery[1].src) : html)
   })
 }
 

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react'
+import type { CheckoutPayload } from './CheckoutForm'
 import {
   ArrowRight,
   ArrowUpRight,
@@ -24,10 +25,10 @@ import PriceTag from './PriceTag'
 import { categories, getSalePrice, formatPrice, getDefaultSize, getProductImage, getProductFacets, getStockForSize, giftCardAmounts, giftCardMaximum, giftCardMinimum, isValidGiftCardAmount, initialProducts, normalizeProductFacets, garmentCuts, productAudiences, productGenders, sizes, type CategoryFilter, type DisplayCurrency, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
 import { apiRequest, type AccountNotification, type AccountSummary, type AccountUser, type ProductReview, type ShippingRate, type StoreConfig } from './api'
 import { calculateShipping } from './shipping'
-import AccountPanel from './AccountPanel'
-import ProductAdmin from './ProductAdmin'
-import CheckoutForm, { type CheckoutPayload } from './CheckoutForm'
-import LegalPages from './LegalPages'
+const AccountPanel = lazy(() => import('./AccountPanel'))
+const ProductAdmin = lazy(() => import('./ProductAdmin'))
+const CheckoutForm = lazy(() => import('./CheckoutForm'))
+const LegalPages = lazy(() => import('./LegalPages'))
 import { legalPageKeys, legalPageTitles, type LegalPageKey } from './legalData'
 import './App.css'
 
@@ -258,10 +259,10 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
             }}
             title="Clic para ampliar"
           >
-            <img key={currentView?.src ?? getProductImage(product)} src={currentView?.src ?? getProductImage(product)} alt={currentView?.alt ?? product.alt} style={zoomOrigin ? { transformOrigin: zoomOrigin } : undefined} />
+            <img key={currentView?.src ?? getProductImage(product)} src={currentView?.src ?? getProductImage(product)} alt={currentView?.alt ?? product.alt} width="900" height="1225" fetchPriority="high" style={zoomOrigin ? { transformOrigin: zoomOrigin } : undefined} />
           </div>
           <div className="product-detail__views" role="group" aria-label={`Vistas de ${product.name}`}>
-            {views.map((view, index) => <button className={selectedView === index ? 'is-active' : ''} key={`${view.label}-${index}`} type="button" onClick={() => onViewChange(index)} aria-label={`Ver ${view.label}`} aria-pressed={selectedView === index}><img src={view.src} alt="" /></button>)}
+            {views.map((view, index) => <button className={selectedView === index ? 'is-active' : ''} key={`${view.label}-${index}`} type="button" onClick={() => onViewChange(index)} aria-label={`Ver ${view.label}`} aria-pressed={selectedView === index}><img src={view.src} alt="" width="120" height="120" loading="lazy" /></button>)}
           </div>
         </div>
         <div className="product-detail__info">
@@ -356,7 +357,7 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
           <div className="related-products__grid">
             {relatedProducts.map((relatedProduct) => (
               <article className="related-product" key={relatedProduct.id}>
-                <button className="related-product__image" type="button" onClick={() => onSelectRelated(relatedProduct)} aria-label={`Ver ${relatedProduct.name}`}><img src={getProductImage(relatedProduct)} alt={relatedProduct.gallery?.[0]?.alt ?? relatedProduct.alt} loading="lazy" /></button>
+                <button className="related-product__image" type="button" onClick={() => onSelectRelated(relatedProduct)} aria-label={`Ver ${relatedProduct.name}`}><img src={getProductImage(relatedProduct)} alt={relatedProduct.gallery?.[0]?.alt ?? relatedProduct.alt} width="900" height="1225" loading="lazy" /></button>
                 <div className="related-product__details"><p className="product-card__category">{relatedProduct.category}</p><h3><button type="button" onClick={() => onSelectRelated(relatedProduct)}>{relatedProduct.name}</button></h3><span><PriceTag product={relatedProduct} currency={currency} usdArsRate={usdArsRate} /></span></div>
                 <button className="related-product__link" type="button" onClick={() => onSelectRelated(relatedProduct)}>Ver producto <ArrowRight size={15} aria-hidden="true" /></button>
               </article>
@@ -478,7 +479,7 @@ function ProductCard({ product, index, isFavorite, selectedSize, currency, usdAr
       >
         <button className="product-card__image-link" type="button" onClick={() => onOpenProduct(product)} aria-label={`Ver detalles de ${product.name}`}>
           <span className="product-card__image-track" style={{ transform: `translateX(-${viewIndex * 100}%)`, transition: isResettingCarousel ? 'none' : undefined }}>
-            {slides.map((view, slideIndex) => <img key={`${slideIndex}-${view.src}`} src={view.src} alt={view.alt} loading="lazy" />)}
+            {slides.map((view, slideIndex) => <img key={`${slideIndex}-${view.src}`} src={view.src} alt={view.alt} width="900" height="1225" loading="lazy" />)}
           </span>
         </button>
         {product.badge && product.badge !== 'Diseño UnFocus' && <span className="product-badge">{product.name}</span>}
@@ -1016,7 +1017,7 @@ function App() {
 
       <header className="site-header">
         <div className="header-inner">
-          <a className="brand" href={selectedProductSlug || isAdminPage || isAccountPage ? '/' : '#inicio'} aria-label="UnFocus, inicio"><span className="brand__logo-wrap"><span className="brand__reveal" aria-hidden="true"><span className="brand__highlight"><img className="brand__logo brand__logo--white" src={unfocusLogoWhite} alt="" /></span></span><img className="brand__logo" src={unfocusLogo} alt="UnFocus" /></span></a>
+          <a className="brand" href={selectedProductSlug || isAdminPage || isAccountPage ? '/' : '#inicio'} aria-label="UnFocus, inicio"><span className="brand__logo-wrap"><span className="brand__reveal" aria-hidden="true"><span className="brand__highlight"><img className="brand__logo brand__logo--white" src={unfocusLogoWhite} alt="" width="1610" height="395" /></span></span><img className="brand__logo" src={unfocusLogo} alt="UnFocus" width="4724" height="1157" /></span></a>
           <nav className="main-nav" aria-label="Navegación principal"><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#coleccion' : '#coleccion'}>Tienda</a><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#historia' : '#historia'}>Nuestra mirada</a><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#newsletter' : '#newsletter'}>Diario</a><a href="?contacto=1" onClick={(event) => { event.preventDefault(); navigateToContact() }}>Contacto</a></nav>
           <div className="header-actions">
             <div className={`search-box${isSearchOpen ? ' is-open' : ''}`}>
@@ -1048,7 +1049,7 @@ function App() {
               {isSuggestionsOpen && searchQuery.trim() && <div className="search-suggestions" id="global-search-suggestions" role="listbox" aria-label="Sugerencias de productos">
                 {searchSuggestions.length ? searchSuggestions.map((product) => (
                   <button className="search-suggestion" key={product.id} type="button" role="option" aria-selected="false" onMouseDown={(event) => event.preventDefault()} onClick={() => { navigateToProduct(product); setSearchQuery(''); setIsSuggestionsOpen(false); setIsSearchOpen(false) }}>
-                    <img src={getProductImage(product)} alt="" />
+                    <img src={getProductImage(product)} alt="" width="900" height="1225" />
                     <span><strong>{product.name}</strong><small>{product.category}</small></span>
                     <span className="search-suggestion__price">{formatPrice(getSalePrice(product), displayCurrency, usdArsRate)}</span>
                   </button>
@@ -1083,6 +1084,7 @@ function App() {
       </header>
 
       <main id="inicio" tabIndex={-1}>
+        <Suspense fallback={<div className="async-route-loading" role="status">Cargando…</div>}>
         {isAdminPage && currentUser?.isAdmin ? <ProductAdmin products={products} onSave={saveProduct} onDelete={deleteProduct} onClose={navigateToStore} /> : isAccountPage || isAdminPage ? (
           <AccountPanel user={currentUser} authLoading={authLoading} currency={displayCurrency} usdArsRate={usdArsRate} onAuthenticated={handleAuthenticated} onLogout={handleLogout} onOpenProduct={navigateToProduct} onOpenAdmin={navigateToAdmin} onToggleFavorite={toggleFavorite} />
         ) : legalPage ? <LegalPages page={legalPage} store={storeConfig?.store ?? null} onBack={navigateToStore} onOpenPage={navigateToLegal} onOpenContact={navigateToContact} /> : isContactPage ? <ContactPage onBack={navigateToStore} /> : activeProduct ? (
@@ -1107,7 +1109,7 @@ function App() {
         ) : (
           <>
         <section className="hero" aria-labelledby="hero-title">
-          {showcaseProducts[0] && <img className="hero__image" src={getProductImage(showcaseProducts[0], 1)} alt={`Espalda de ${showcaseProducts[0].name}`} />}
+          {showcaseProducts[0] && <img className="hero__image" src={getProductImage(showcaseProducts[0], 1)} alt={`Espalda de ${showcaseProducts[0].name}`} width="1600" height="2200" fetchPriority="high" />}
           <div className="hero__veil" />
           <div className="hero__content">
             <p className="eyebrow hero__eyebrow"><span /> Diseñada desde la experiencia neurodivergente</p>
@@ -1185,7 +1187,7 @@ function App() {
         </section>
 
         <section className="story-section" id="historia">
-          <div className="story-image-wrap">{(showcaseProducts[1] ?? showcaseProducts[0]) && <img src={getProductImage(showcaseProducts[1] ?? showcaseProducts[0], 1)} alt={`Espalda de ${(showcaseProducts[1] ?? showcaseProducts[0]).name}`} loading="lazy" />}<span className="story-image-label">UNFOCUS · A TU RITMO</span></div>
+          <div className="story-image-wrap">{(showcaseProducts[1] ?? showcaseProducts[0]) && <img src={getProductImage(showcaseProducts[1] ?? showcaseProducts[0], 1)} alt={`Espalda de ${(showcaseProducts[1] ?? showcaseProducts[0]).name}`} width="900" height="1225" loading="lazy" />}<span className="story-image-label">UNFOCUS · A TU RITMO</span></div>
           <div className="story-copy"><p className="eyebrow">La comodidad también es personal</p><h2>Tu forma de sentir<br />es <em>la medida.</em></h2><p>La textura, las costuras, el ajuste y las etiquetas importan. Por eso describimos cada prenda con claridad: para que puedas decidir cómo se sentirá antes de que llegue a casa. Sin reglas sobre cómo vestirte. Sin prisa.</p><a className="text-link" href="#coleccion">Encuentra tu comodidad <ArrowUpRight size={17} aria-hidden="true" /></a><span className="story-scribble" aria-hidden="true">sé tú, a tu ritmo</span></div>
         </section>
 
@@ -1196,10 +1198,11 @@ function App() {
         </section>
           </>
         )}
+        </Suspense>
       </main>
 
       <footer className="site-footer">
-        <a className="brand brand--footer" href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/' : '#inicio'} aria-label="UnFocus, inicio"><span className="brand__logo-wrap"><span className="brand__reveal" aria-hidden="true"><span className="brand__highlight"><img className="brand__logo brand__logo--white" src={unfocusLogoWhite} alt="" /></span></span><img className="brand__logo" src={unfocusLogo} alt="UnFocus" /></span></a><span>Seeking clarity. Embrace yourself.</span>
+        <a className="brand brand--footer" href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/' : '#inicio'} aria-label="UnFocus, inicio"><span className="brand__logo-wrap"><span className="brand__reveal" aria-hidden="true"><span className="brand__highlight"><img className="brand__logo brand__logo--white" src={unfocusLogoWhite} alt="" width="1610" height="395" /></span></span><img className="brand__logo" src={unfocusLogo} alt="UnFocus" width="4724" height="1157" /></span></a><span>Seeking clarity. Embrace yourself.</span>
         <div className="footer-links"><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#coleccion' : '#coleccion'}>Tienda</a><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#historia' : '#historia'}>Nuestra mirada</a><a href="?contacto=1" onClick={(event) => { event.preventDefault(); navigateToContact() }}>Contacto</a></div>
         <nav className="footer-legal" aria-label="Información legal">{legalPageKeys.map((key) => <a key={key} href={`?legal=${key}`} onClick={(event) => { event.preventDefault(); navigateToLegal(key) }}>{legalPageTitles[key]}</a>)}</nav>
         {storeConfig?.store.legalName && <p className="footer-store">{storeConfig.store.legalName}{storeConfig.store.taxId ? ` · CUIT ${storeConfig.store.taxId}` : '}{storeConfig.store.address ? ` · ${storeConfig.store.address}` : '}</p>}<span className="footer-copyright">© 2026 UnFocus</span>
@@ -1212,14 +1215,14 @@ function App() {
           <aside className="cart-drawer" ref={cartDrawerRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="cart-title">
             <div className="cart-header"><div><p className="eyebrow">Tu selección</p><h2 id="cart-title">La bolsa <span>({cartCount})</span></h2></div><button className="icon-button" type="button" onClick={() => { setIsCartOpen(false); setCheckoutStep('bag') }} aria-label="Cerrar bolsa"><X size={21} /></button></div>
             {cartItems.length > 0 && checkoutStep === 'delivery' ? (
-              <CheckoutForm user={currentUser} subtotal={cartTotal} items={cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity }))} shipping={storeConfig?.shipping ?? null} transfer={storeConfig?.transfer ?? null} currency={displayCurrency} usdArsRate={usdArsRate} isSubmitting={isCheckingOut} onBack={() => setCheckoutStep('bag')} onOpenTerms={() => navigateToLegal('terminos')} digitalOnly={cartItems.every((item) => item.isGiftCard)} onRequestLogin={() => { setIsCartOpen(false); setCheckoutStep('bag'); navigateToAccount() }} onSubmit={(payload) => { void handleCheckout(payload) }} />
+              <Suspense fallback={<p role="status">Cargando el formulario de envío…</p>}><CheckoutForm user={currentUser} subtotal={cartTotal} items={cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity }))} shipping={storeConfig?.shipping ?? null} transfer={storeConfig?.transfer ?? null} currency={displayCurrency} usdArsRate={usdArsRate} isSubmitting={isCheckingOut} onBack={() => setCheckoutStep('bag')} onOpenTerms={() => navigateToLegal('terminos')} digitalOnly={cartItems.every((item) => item.isGiftCard)} onRequestLogin={() => { setIsCartOpen(false); setCheckoutStep('bag'); navigateToAccount() }} onSubmit={(payload) => { void handleCheckout(payload) }} /></Suspense>
             ) : cartItems.length === 0 ? (
               <div className="cart-empty"><div className="cart-empty__icon"><ShoppingBag size={26} strokeWidth={1.5} /></div><h3>Tu bolsa está vacía.</h3><p>Elige solo lo que se sienta bien para ti.</p><button className="button button--dark" type="button" onClick={() => setIsCartOpen(false)}>Seguir mirando <ArrowRight size={16} /></button></div>
             ) : (
               <>
                 <div className="cart-items">{cartItems.map((item) => (
                   <article className="cart-item" key={item.cartKey}>
-                    <img src={getProductImage(item)} alt={item.gallery?.[0]?.alt ?? item.alt} />
+                    <img src={getProductImage(item)} alt={item.gallery?.[0]?.alt ?? item.alt} width="90" height="120" />
                     <div className="cart-item__body"><p className="product-card__category">{item.isGiftCard ? 'Tarjeta de regalo' : `${item.category} · Talla ${item.size}`}</p><h3>{item.name}</h3><strong>{formatPrice(item.price, displayCurrency, usdArsRate)}</strong><div className="quantity-stepper" aria-label={`Cantidad de ${item.name}, talla ${item.size}`}><button type="button" onClick={() => changeQuantity(item.cartKey, -1)} aria-label={`Quitar una unidad de ${item.name}, talla ${item.size}`}><Minus size={13} /></button><span>{item.quantity}</span><button type="button" onClick={() => changeQuantity(item.cartKey, 1)} aria-label={`Añadir una unidad de ${item.name}, talla ${item.size}`}><Plus size={13} /></button></div></div>
                     <button className="cart-item__remove" type="button" onClick={() => changeQuantity(item.cartKey, -item.quantity)} aria-label={`Eliminar ${item.name}, talla ${item.size}`}><X size={16} /></button>
                   </article>
