@@ -64,6 +64,9 @@ Catálogo y tienda
 [x] Guía de talles con equivalencia argentina y tabla de medidas
 [ ] Verificar las medidas reales de las prendas (hoy son valores orientativos en `garmentMeasurements`, src/App.tsx)
 [x] Precios en ARS con conversión informativa a USD
+[x] Costos de remera, logística y producción; cargos/impuestos y ganancia editables; precio sugerido redondeado al próximo $1.000 y modificable manualmente. El monotributo nacional es una cuota fija (no un porcentaje por producto); Ingresos Brutos varía por jurisdicción, por eso la tasa queda editable y parte de 0 %
+[x] Aviso discreto «IVA incluido» debajo del precio de producto
+[~] Seis tarjetas recortadas como PNG sin reescalar ni recomprimir en `ident/tarjetas/`; están solo localmente porque `ident/` está excluida de Git y no se publicaron
 
 Cuenta de cliente
 [x] Registro, login y logout (cookies HttpOnly, scrypt)
@@ -108,12 +111,13 @@ Legales (Argentina)
 
 Despliegue
 [x] Dockerfile y docker-compose
-[ ] Elegir hosting con almacenamiento persistente (SQLite + uploads) y HTTPS
+[~] Hosting Hostinger y HTTPS activos; revisar que `DATABASE_PATH` apunte a almacenamiento persistente (valor oculto) y configurar `UPLOAD_DIR`/`IDENT_DIR` antes de futuras publicaciones
 [ ] Variables de producción: NODE_ENV=production, PUBLIC_BASE_URL, ADMIN_EMAIL/ADMIN_PASSWORD, credenciales de Mercado Pago de producción
 [ ] Quitar MP_WEBHOOK_URL en producción (se usa PUBLIC_BASE_URL/api/payments/webhook)
 [X] Dominio y certificado (unfocus.shop)
 [X] Backups automáticos de la base de datos en producción
 [x] Subir el repositorio a GitHub
+[x] Publicar `main` (commit `e102e5f`) en `unfocus.shop`; Hostinger informa build y publicación completados y el sitio responde HTTP 200
 
 ========================================
 B. PARA ACERCARSE A NIKE.COM U OTRA TIENDA GRANDE
@@ -161,7 +165,7 @@ Operación y calidad
 [x] Reportes de ventas y stock bajo
 [ ] Importación/exportación de catálogo (CSV)
 [ ] Multi-idioma y multi-moneda de cobro
-[ ] Tests automatizados (hoy solo lint y build)
+[x] Tests automatizados: `npm test` (15 pruebas), `npm run lint` y `npm run build`; falta cobertura E2E
 [ ] Accesibilidad: axe-core WCAG 2.2 AA sin violaciones en tienda, ficha, bolsa, checkout, cuenta, legales y admin; falta prueba manual con lector de pantalla/zoom 200 % y Lighthouse de rendimiento
 [ ] Migrar de SQLite a PostgreSQL si crece el volumen
 [ ] Páginas de ayuda / FAQ y chat de soporte
@@ -175,7 +179,7 @@ Operación y calidad
 [ ] Definir MP_WEBHOOK_SECRET (clave secreta de Webhooks de Mercado Pago)
 [ ] Cargar datos bancarios de transferencia y datos legales en el panel admin
 [ ] Probar en la web con pagos reales/sandbox: cupones, invitado, tarjeta de regalo, transferencia
-[ ] Subir a producción las imágenes semilla de ident/ (carpeta fuera de git)
+[~] Si se necesitan en la web, subir por separado las imágenes de `ident/`: los seis recortes están en `ident/tarjetas/`, fuera de Git y aún no están en producción
 
 ========================================
 C. CONTROL DE CALIDAD DE LA PÁGINA (consejos de Hostinger)
@@ -183,15 +187,15 @@ C. CONTROL DE CALIDAD DE LA PÁGINA (consejos de Hostinger)
 
 
 Móvil (puntuación actual entre paréntesis; 0 = crítico, 50 = mejorable, 94 = correcto)
-[ ] Avoid multiple page redirects: evitar redirecciones múltiples (http→https, www→raíz) (0; requiere configuración DNS/proxy del dominio)
-[x] LCP request discovery: preload de prioridad alta para hero y producto; fetchPriority alto en imagen principal (0)
+[~] Avoid multiple page redirects: `http://unfocus.shop` redirige una vez a HTTPS; `https://www.unfocus.shop` responde sin redirigir a la raíz. Definir canonicalización www si se busca un único host
+[~] LCP request discovery: preload de prioridad alta para hero y producto y `fetchPriority` alto; el HTML de producción incluye el preload. Falta reevaluar con Lighthouse móvil
 [ ] Render-blocking requests: eliminar CSS/JS que bloquean el renderizado inicial (0)
-[ ] Reduce unused JavaScript: paneles de cuenta, administración, legales y checkout con carga dinámica; bundle inicial en 519 kB (gzip 152 kB), aún supera 500 kB
-[ ] Document request latency: compresión gzip activada; falta medir TTFB real del documento tras desplegar (0)
+[~] Reduce unused JavaScript: cuenta, administración, legales y checkout usan carga dinámica. El build local actual genera un chunk inicial de 519,12 kB (gzip 151,83 kB), pero el asset publicado mide 284.099 bytes y el log del deploy reporta gzip 87,40 kB; investigar la diferencia y seguir reduciendo el bundle
+[~] Document request latency: compresión configurada; medición puntual en producción con `curl`: TTFB ~268 ms para HTML y ~190 ms para `/api/products`. Falta una medición repetida/origin y Lighthouse
 [ ] Network dependency tree: acortar las cadenas de peticiones encadenadas (preconnect, evitar imports en cascada) (0)
 [ ] Reduce unused CSS: eliminar o dividir el CSS no usado (0)
 [ ] Improve image delivery: las nuevas subidas se convierten a WebP; faltan derivados WebP/AVIF y tamaños responsivos para imágenes existentes (50)
-[x] Use efficient cache lifetimes: assets con hash y subidas UUID con caché de un año; HTML revalidable (50)
+[x] Use efficient cache lifetimes: confirmado en producción; assets con hash sirven `Cache-Control: max-age=31536000, immutable` y el HTML `no-cache`
 [x] Image elements do not have explicit width and height: definir width y height en todas las <img> (evita saltos de layout) (50)
 [x] Hora de interactuar (Time to Interactive) (94)
 [ ] Volver a medir en móvil tras desplegar los cambios y revisar si Hostinger lista más consejos fuera de los ya incluidos
