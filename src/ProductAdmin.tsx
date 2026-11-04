@@ -11,6 +11,11 @@ type ProductDraft = {
   slug: string
   name: string
   price: string
+  garmentCostArs: string
+  logisticsCostArs: string
+  productionCostArs: string
+  taxPercent: string
+  profitPercent: string
   stockBySize: Record<string, number>
   composition: string
   cut: GarmentCut
@@ -32,12 +37,27 @@ type ProductAdminProps = {
 
 const minProductImages = 3
 const maxProductImages = 10
+const priceRoundingStep = 1000
+
+const calculateSuggestedPrice = (draft: ProductDraft) => {
+  const totalCost = Number(draft.garmentCostArs) + Number(draft.logisticsCostArs) + Number(draft.productionCostArs)
+  const taxRate = Number(draft.taxPercent)
+  const profitRate = Number(draft.profitPercent)
+  if (totalCost <= 0 || !Number.isFinite(taxRate) || taxRate < 0 || taxRate >= 100 || !Number.isFinite(profitRate) || profitRate < 0) return 0
+  const beforeRounding = totalCost * (1 + profitRate / 100) / (1 - taxRate / 100)
+  return Math.ceil(beforeRounding / priceRoundingStep) * priceRoundingStep
+}
 
 const emptyDraft = (): ProductDraft => ({
   id: null,
   slug: '',
   name: '',
   price: '',
+  garmentCostArs: '0',
+  logisticsCostArs: '0',
+  productionCostArs: '0',
+  taxPercent: '0',
+  profitPercent: '0',
   stockBySize: Object.fromEntries(sizes.map((size) => [size, 0])),
   composition: '',
   cut: 'Regular fit',
@@ -57,6 +77,11 @@ const productToDraft = (product: Product): ProductDraft => {
     slug: product.slug,
     name: product.name,
     price: String(product.price),
+    garmentCostArs: String(product.garmentCostArs ?? 0),
+    logisticsCostArs: String(product.logisticsCostArs ?? 0),
+    productionCostArs: String(product.productionCostArs ?? 0),
+    taxPercent: String(product.taxPercent ?? 0),
+    profitPercent: String(product.profitPercent ?? 0),
     stockBySize: Object.fromEntries(sizes.map((size) => [size, Number(product.stockBySize?.[size] ?? 0)])),
     composition: product.composition,
     cut: facets.cut,
@@ -99,6 +124,8 @@ const createSlug = (value: string) =>
 function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps) {
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState<ProductDraft | null>(null)
+  const [adminProducts, setAdminProducts] = useState<Product[]>([])
+  const [adminProductsLoaded, setAdminProductsLoaded] = useState(false)
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null)
   const [processingImage, setProcessingImage] = useState(false)
   const [formError, setFormError] = useState('')
@@ -116,6 +143,18 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
   const [miCorreoStatus, setMiCorreoStatus] = useState<{ configured: boolean; missing: string[]; environment: string } | null>(null)
   const [reportDays, setReportDays] = useState(30)
   const [report, setReport] = useState<AdminReport | null>(null)
+
+  useEffect(() => {
+    let isCurrent = true
+    apiRequest<{ products: Product[] }>('/api/admin/products')
+      .then(({ products: adminProductList }) => {
+        if (!isCurrent) return
+        setAdminProducts(adminProductList)
+        setAdminProductsLoaded(true)
+      })
+      .catch((requestError) => { if (isCurrent) setFormError(requestError instanceof Error ? requestError.message : 'No se pudieron cargar los costos de los productos.') })
+    return () => { isCurrent = false }
+  }, [])
 
   useEffect(() => {
     let isCurrent = true
@@ -162,6 +201,15 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
   )
   const inventoryValue = products.reduce((total, product) => total + getSalePrice(product), 0)
 
+  const updatePricingField = (field: 'garmentCostArs' | 'logisticsCostArs' | 'productionCostArs' | 'taxPercent' | 'profitPercent', value: string) => {
+    setDraft((current) => {
+      if (!current) return current
+      const updated = { ...current, [field]: value }
+      const suggestedPrice = calculateSuggestedPrice(updated)
+      return suggestedPrice > 0 ? { ...updated, price: String(suggestedPrice) } : updated
+    })
+  }
+
   const handleImages = async (files: File[], replaceIndex?: number) => {
     if (!files.length) return
     setFormError('')
@@ -204,6 +252,11 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
       name,
       category: existingProduct?.category ?? 'Camisetas',
       price: Number(draft.price),
+      garmentCostArs: Number(draft.garmentCostArs),
+      logisticsCostArs: Number(draft.logisticsCostArs),
+      productionCostArs: Number(draft.productionCostArs),
+      taxPercent: Number(draft.taxPercent),
+      profitPercent: Number(draft.profitPercent),
       discountType: draft.discountType,
       discountValue: draft.discountType === 'none' ? 0 : Number(draft.discountValue),
       alt: `Camiseta UnFocus ${name}`,
@@ -227,6 +280,9 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
     setIsSaving(true)
     try {
       await onSave(product)
+      setAdminProducts((current) => current.some((item) => item.id === product.id)
+        ? current.map((item) => item.id === product.id ? product : item)
+        : [...current, product])
       setDraft(null)
       setFormError('')
     } catch (requestError) {
@@ -240,6 +296,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
     setFormError('')
     try {
       await onDelete(productId)
+      setAdminProducts((current) => current.filter((product) => product.id !== productId))
       setPendingDeleteId(null)
     } catch (requestError) {
       setFormError(requestError instanceof Error ? requestError.message : 'No se pudo eliminar el producto.')
@@ -406,7 +463,24 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
 
           <div className="admin-form-grid">
             <label className="admin-field"><span>Nombre del producto</span><input autoFocus required maxLength={80} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Ej. Mind Unfiltered" /></label>
-            <label className="admin-field"><span>Precio (ARS)</span><input required type="number" min="1" step="1" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} placeholder="45900" /></label>
+            <label className="admin-field"><span>Precio final (ARS) · editable</span><input required type="number" min="1" step="1" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} placeholder="Se calcula con los costos" /></label>
+            <div className="admin-cost-panel admin-field--wide">
+              <h3>Costos y precio sugerido</h3>
+              <div className="admin-cost-grid">
+                <label className="admin-field"><span>Remera (ARS)</span><input type="number" min="0" step="1" value={draft.garmentCostArs} onChange={(event) => updatePricingField('garmentCostArs', event.target.value)} /></label>
+                <label className="admin-field"><span>Logística (ARS)</span><input type="number" min="0" step="1" value={draft.logisticsCostArs} onChange={(event) => updatePricingField('logisticsCostArs', event.target.value)} /></label>
+                <label className="admin-field"><span>Producción (ARS)</span><input type="number" min="0" step="1" value={draft.productionCostArs} onChange={(event) => updatePricingField('productionCostArs', event.target.value)} /></label>
+                <label className="admin-field"><span>Impuestos y cargos sobre venta (%)</span><input type="number" min="0" max="99.99" step="0.01" value={draft.taxPercent} onChange={(event) => updatePricingField('taxPercent', event.target.value)} /></label>
+                <label className="admin-field"><span>Ganancia sobre costo (%)</span><input type="number" min="0" max="1000" step="0.1" value={draft.profitPercent} onChange={(event) => updatePricingField('profitPercent', event.target.value)} /></label>
+              </div>
+              <p className="admin-cost-panel__note">El monotributo nacional es una cuota fija, no un porcentaje por producto. Ingresos Brutos y cargos locales dependen de tu jurisdicción; ingresá aquí la tasa efectiva que corresponda. <a href="https://www.arca.gob.ar/monotributo/ayuda/que-es.asp" target="_blank" rel="noreferrer">Información oficial de ARCA</a>.</p>
+              <p className="admin-cost-panel__summary" aria-live="polite">
+                Costos totales: <strong>{formatPrice(Number(draft.garmentCostArs) + Number(draft.logisticsCostArs) + Number(draft.productionCostArs))}</strong>
+                {' · '}Precio sugerido: <strong>{calculateSuggestedPrice(draft) > 0 ? formatPrice(calculateSuggestedPrice(draft)) : 'Completa los costos'}</strong>
+                {' · '}Redondeado hacia arriba al próximo {formatPrice(priceRoundingStep)}.
+                {' '}La sugerencia se actualiza al cambiar los costos o porcentajes; el precio final se puede ajustar manualmente.
+              </p>
+            </div>
             <label className="admin-field"><span>Composición</span><input required maxLength={100} value={draft.composition} onChange={(event) => setDraft({ ...draft, composition: event.target.value })} placeholder="100% algodón" /></label>
             <label className="admin-field"><span>Corte y calce</span><select value={draft.cut} onChange={(event) => setDraft({ ...draft, cut: event.target.value as GarmentCut })}>{garmentCuts.map((cut) => <option key={cut} value={cut}>{cut}</option>)}</select></label>
             <label className="admin-field"><span>Público por edad</span><select value={draft.audience} onChange={(event) => setDraft({ ...draft, audience: event.target.value as ProductAudience })}>{productAudiences.map((audience) => <option key={audience} value={audience}>{audience}</option>)}</select></label>
@@ -467,7 +541,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
                 <td><div className="admin-product-cell"><img src={getProductImage(product)} alt="" /><div><strong>{product.name}</strong><span>{product.category} · {product.gallery?.length ?? 0} vistas</span></div></div></td>
                 <td>{product.composition}</td>
                 <td>{hasDiscount(product) ? <><s>{formatPrice(product.price)}</s> <strong>{formatPrice(getSalePrice(product))}</strong></> : formatPrice(product.price)}</td>
-                <td><div className="admin-row-actions">{pendingDeleteId === product.id ? <><span className="admin-confirm-label">¿Eliminar?</span><button className="admin-icon-button admin-icon-button--danger" type="button" onClick={() => { void confirmDelete(product.id) }} aria-label={`Confirmar eliminación de ${product.name}`} title="Confirmar eliminación"><Check size={16} /></button><button className="admin-icon-button" type="button" onClick={() => setPendingDeleteId(null)} aria-label="Cancelar eliminación" title="Cancelar"><X size={16} /></button></> : <><button className="admin-icon-button" type="button" onClick={() => { setDraft(productToDraft(product)); setFormError('') }} aria-label={`Editar ${product.name}`} title="Editar"><Pencil size={16} /></button><button className="admin-icon-button admin-icon-button--danger" type="button" onClick={() => setPendingDeleteId(product.id)} aria-label={`Eliminar ${product.name}`} title="Eliminar"><Trash2 size={16} /></button></>}</div></td>
+                <td><div className="admin-row-actions">{pendingDeleteId === product.id ? <><span className="admin-confirm-label">¿Eliminar?</span><button className="admin-icon-button admin-icon-button--danger" type="button" onClick={() => { void confirmDelete(product.id) }} aria-label={`Confirmar eliminación de ${product.name}`} title="Confirmar eliminación"><Check size={16} /></button><button className="admin-icon-button" type="button" onClick={() => setPendingDeleteId(null)} aria-label="Cancelar eliminación" title="Cancelar"><X size={16} /></button></> : <><button className="admin-icon-button" type="button" disabled={!adminProductsLoaded} onClick={() => { const adminProduct = adminProducts.find((item) => item.id === product.id); setDraft(productToDraft(adminProduct ?? product)); setFormError('') }} aria-label={`Editar ${product.name}`} title="Editar"><Pencil size={16} /></button><button className="admin-icon-button admin-icon-button--danger" type="button" onClick={() => setPendingDeleteId(product.id)} aria-label={`Eliminar ${product.name}`} title="Eliminar"><Trash2 size={16} /></button></>}</div></td>
               </tr>
             ))}
             {filteredProducts.length === 0 && <tr><td className="admin-empty" colSpan={4}>No hay productos que coincidan con la búsqueda.</td></tr>}

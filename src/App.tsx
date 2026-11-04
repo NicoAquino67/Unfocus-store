@@ -241,6 +241,7 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
           <p className="eyebrow">UnFocus · Diseño original</p>
           <h1 id="product-detail-title">{product.name}</h1>
           <p className="product-detail__price"><PriceTag product={product} currency={currency} usdArsRate={usdArsRate} /></p>
+          <p className="product-detail__tax-note">IVA incluido</p>
           <p className="product-detail__description">{product.description}</p>
           <div className="product-detail__story"><h2>Sobre el diseño</h2><p>{product.designDescription}</p></div>
           {product.isGiftCard ? <p className="product-detail__gift-note">Sin vencimiento. El código llega por correo apenas se confirma el pago y se canjea en el checkout, por partes si quieres.</p> : <dl className="product-detail__specs"><div><dt>Composición</dt><dd>{product.composition}</dd></div><div><dt>Tallas disponibles</dt><dd>XS–3XL</dd></div><div><dt>Estampado</dt><dd>Frente y espalda</dd></div></dl>}

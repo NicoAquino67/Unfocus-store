@@ -56,6 +56,11 @@ database.exec(`
     name TEXT NOT NULL,
     category TEXT NOT NULL,
     price_ars INTEGER NOT NULL CHECK (price_ars > 0),
+    garment_cost_ars INTEGER NOT NULL DEFAULT 0 CHECK (garment_cost_ars >= 0),
+    logistics_cost_ars INTEGER NOT NULL DEFAULT 0 CHECK (logistics_cost_ars >= 0),
+    production_cost_ars INTEGER NOT NULL DEFAULT 0 CHECK (production_cost_ars >= 0),
+    tax_percent REAL NOT NULL DEFAULT 0 CHECK (tax_percent >= 0 AND tax_percent < 100),
+    profit_percent REAL NOT NULL DEFAULT 0 CHECK (profit_percent >= 0),
     stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
     stock_by_size TEXT NOT NULL DEFAULT '{}',
     composition TEXT NOT NULL,
@@ -215,6 +220,11 @@ const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().m
   if (!columns.has('discount_value')) database.exec('ALTER TABLE products ADD COLUMN discount_value INTEGER NOT NULL DEFAULT 0')
   if (!columns.has('extra_images')) database.exec("ALTER TABLE products ADD COLUMN extra_images TEXT NOT NULL DEFAULT '[]'")
   if (!columns.has('stock_by_size')) database.exec("ALTER TABLE products ADD COLUMN stock_by_size TEXT NOT NULL DEFAULT '{}' ")
+  if (!columns.has('garment_cost_ars')) database.exec('ALTER TABLE products ADD COLUMN garment_cost_ars INTEGER NOT NULL DEFAULT 0')
+  if (!columns.has('logistics_cost_ars')) database.exec('ALTER TABLE products ADD COLUMN logistics_cost_ars INTEGER NOT NULL DEFAULT 0')
+  if (!columns.has('production_cost_ars')) database.exec('ALTER TABLE products ADD COLUMN production_cost_ars INTEGER NOT NULL DEFAULT 0')
+  if (!columns.has('tax_percent')) database.exec('ALTER TABLE products ADD COLUMN tax_percent REAL NOT NULL DEFAULT 0')
+  if (!columns.has('profit_percent')) database.exec('ALTER TABLE products ADD COLUMN profit_percent REAL NOT NULL DEFAULT 0')
   database.exec(`
     CREATE TABLE IF NOT EXISTS product_reviews (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -471,6 +481,15 @@ const productFromRow = (row) => ({
   createdAt: row.created_at,
   sold: Number(row.sold ?? 0),
   isGiftCard: Boolean(row.is_gift_card),
+})
+
+const adminProductFromRow = (row) => ({
+  ...productFromRow(row),
+  garmentCostArs: Number(row.garment_cost_ars ?? 0),
+  logisticsCostArs: Number(row.logistics_cost_ars ?? 0),
+  productionCostArs: Number(row.production_cost_ars ?? 0),
+  taxPercent: Number(row.tax_percent ?? 0),
+  profitPercent: Number(row.profit_percent ?? 0),
 })
 
 // sold = unidades en pedidos pagados; alimenta el orden por popularidad
@@ -807,6 +826,11 @@ const validateProduct = (body) => {
   const name = typeof body.name === 'string' ? body.name.trim() : ''
   const slug = typeof body.slug === 'string' ? body.slug.trim().toLowerCase() : ''
   const price = Number(body.price)
+  const garmentCostArs = Number(body.garmentCostArs ?? 0)
+  const logisticsCostArs = Number(body.logisticsCostArs ?? 0)
+  const productionCostArs = Number(body.productionCostArs ?? 0)
+  const taxPercent = Number(body.taxPercent ?? 0)
+  const profitPercent = Number(body.profitPercent ?? 0)
   const hasSizeStock = body.stockBySize !== null && typeof body.stockBySize === 'object' && !Array.isArray(body.stockBySize)
   const stockBySize = hasSizeStock
     ? Object.fromEntries(Object.entries(body.stockBySize).map(([size, value]) => [size, Number(value)]))
@@ -823,6 +847,9 @@ const validateProduct = (body) => {
   if (name.length < 2 || name.length > 80) throw new Error('El nombre debe tener entre 2 y 80 caracteres.')
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) throw new Error('El enlace del producto no es válido.')
   if (!Number.isSafeInteger(price) || price < 1) throw new Error('El precio debe ser un importe entero en pesos argentinos.')
+  if (![garmentCostArs, logisticsCostArs, productionCostArs].every((cost) => Number.isSafeInteger(cost) && cost >= 0)) throw new Error('Los costos deben ser importes enteros mayores o iguales a cero.')
+  if (!Number.isFinite(taxPercent) || taxPercent < 0 || taxPercent >= 100) throw new Error('El porcentaje de impuestos debe ser mayor o igual a cero y menor a 100.')
+  if (!Number.isFinite(profitPercent) || profitPercent < 0 || profitPercent > 1000) throw new Error('La ganancia porcentual debe estar entre 0 y 1000.')
   if (discountType === 'percent' && (!Number.isInteger(discountValue) || discountValue < 1 || discountValue > 90)) throw new Error('El descuento porcentual debe ser un entero entre 1 y 90.')
   if (discountType === 'fixed' && (!Number.isInteger(discountValue) || discountValue < 1 || discountValue >= price)) throw new Error('El descuento en pesos debe ser un entero menor al precio original.')
   if (hasInvalidSizeStock || !Number.isSafeInteger(stock) || stock < 0) throw new Error('El stock por talle debe contener números enteros mayores o iguales a cero.')
@@ -831,7 +858,7 @@ const validateProduct = (body) => {
   if (!description || description.length > 500) throw new Error('La descripción debe tener hasta 500 caracteres.')
   if (!designDescription || designDescription.length > 500) throw new Error('La descripción del diseño debe tener hasta 500 caracteres.')
   if (!Array.isArray(gallery) || gallery.length < minimumProductImages || gallery.length > maximumProductImages) throw new Error(`Sube entre ${minimumProductImages} y ${maximumProductImages} imágenes del producto.`)
-  return { name, slug, price, discountType, discountValue, stock, stockBySize, composition, description, designDescription, category, gallery }
+  return { name, slug, price, garmentCostArs, logisticsCostArs, productionCostArs, taxPercent, profitPercent, discountType, discountValue, stock, stockBySize, composition, description, designDescription, category, gallery }
 }
 
 const requireProductBody = async (body) => {
@@ -855,18 +882,18 @@ const requireProductBody = async (body) => {
 }
 
 const insertProduct = database.prepare(`
-  INSERT INTO products (slug, name, category, price_ars, stock, stock_by_size, composition, features_json, description, design_description, front_image, front_alt, back_image, back_alt, badge, extra_images, discount_type, discount_value)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO products (slug, name, category, price_ars, garment_cost_ars, logistics_cost_ars, production_cost_ars, tax_percent, profit_percent, stock, stock_by_size, composition, features_json, description, design_description, front_image, front_alt, back_image, back_alt, badge, extra_images, discount_type, discount_value)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `)
 const updateProduct = database.prepare(`
-  UPDATE products SET slug = ?, name = ?, category = ?, price_ars = ?, stock = ?, stock_by_size = ?, composition = ?, features_json = ?, description = ?, design_description = ?, front_image = ?, front_alt = ?, back_image = ?, back_alt = ?, badge = ?, extra_images = ?, discount_type = ?, discount_value = ?, updated_at = CURRENT_TIMESTAMP
+  UPDATE products SET slug = ?, name = ?, category = ?, price_ars = ?, garment_cost_ars = ?, logistics_cost_ars = ?, production_cost_ars = ?, tax_percent = ?, profit_percent = ?, stock = ?, stock_by_size = ?, composition = ?, features_json = ?, description = ?, design_description = ?, front_image = ?, front_alt = ?, back_image = ?, back_alt = ?, badge = ?, extra_images = ?, discount_type = ?, discount_value = ?, updated_at = CURRENT_TIMESTAMP
   WHERE id = ?
 `)
 
 app.post('/api/admin/products', requireAdmin, async (request, response) => {
   try {
     const product = await requireProductBody(request.body)
-    const result = insertProduct.run(product.slug, product.name, product.category, product.price, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue)
+    const result = insertProduct.run(product.slug, product.name, product.category, product.price, product.garmentCostArs, product.logisticsCostArs, product.productionCostArs, product.taxPercent, product.profitPercent, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue)
     response.status(201).json({ product: productFromRow(selectProductById.get(Number(result.lastInsertRowid))) })
   } catch (error) {
     response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un producto con ese enlace.' : error.message })
@@ -878,7 +905,7 @@ app.put('/api/admin/products/:id', requireAdmin, async (request, response) => {
   if (!Number.isSafeInteger(id) || !selectProductById.get(id)) return response.status(404).json({ error: 'Producto no encontrado.' })
   try {
     const product = await requireProductBody(request.body)
-    updateProduct.run(product.slug, product.name, product.category, product.price, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue, id)
+    updateProduct.run(product.slug, product.name, product.category, product.price, product.garmentCostArs, product.logisticsCostArs, product.productionCostArs, product.taxPercent, product.profitPercent, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue, id)
     response.json({ product: productFromRow(selectProductById.get(id)) })
   } catch (error) {
     response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un producto con ese enlace.' : error.message })
@@ -891,6 +918,10 @@ app.delete('/api/admin/products/:id', requireAdmin, (request, response) => {
   const result = database.prepare('DELETE FROM products WHERE id = ?').run(id)
   if (!result.changes) return response.status(404).json({ error: 'Producto no encontrado.' })
   response.json({ ok: true })
+})
+
+app.get('/api/admin/products', requireAdmin, (_request, response) => {
+  response.json({ products: allProducts.all().map(adminProductFromRow) })
 })
 
 const serializeOrder = (order, extra = {}) => ({

@@ -12,6 +12,11 @@ export type Product = {
   name: string
   category: Category
   price: number
+  garmentCostArs?: number
+  logisticsCostArs?: number
+  productionCostArs?: number
+  taxPercent?: number
+  profitPercent?: number
   discountType?: 'none' | 'percent' | 'fixed'
   discountValue?: number
   salePrice?: number
