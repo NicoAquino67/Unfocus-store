@@ -111,6 +111,16 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
   const [settings, setSettings] = useState<StoreSettings | null>(null)
   const [settingsMessage, setSettingsMessage] = useState('')
   const [trackingDrafts, setTrackingDrafts] = useState<Record<number, { carrier: string; trackingCode: string; trackingUrl: string }>>({})
+  const [correoStatus, setCorreoStatus] = useState<{ configured: boolean; missing: string[]; environment: string } | null>(null)
+  const [correoBusyId, setCorreoBusyId] = useState<number | null>(null)
+
+  useEffect(() => {
+    let isCurrent = true
+    apiRequest<{ configured: boolean; missing: string[]; environment: string }>('/api/admin/correo-argentino/status')
+      .then((status) => { if (isCurrent) setCorreoStatus(status) })
+      .catch(() => undefined)
+    return () => { isCurrent = false }
+  }, [])
 
   useEffect(() => {
     let isCurrent = true
@@ -255,6 +265,34 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
     }
   }
 
+  const createCorreoShipment = async (orderId: number) => {
+    setCorreoBusyId(orderId)
+    try {
+      const result = await apiRequest<{ carrier: string; trackingCode: string; trackingUrl: string }>(`/api/admin/orders/${orderId}/correo-argentino`, { method: 'POST' })
+      setOrders((current) => current.map((order) => order.id === orderId ? { ...order, ...result, correoArgentino: true } : order))
+      setTrackingDrafts((current) => ({ ...current, [orderId]: result }))
+      setFormError('')
+    } catch (requestError) {
+      setFormError(requestError instanceof Error ? requestError.message : 'No se pudo generar el envío.')
+    } finally {
+      setCorreoBusyId(null)
+    }
+  }
+
+  const cancelCorreoShipment = async (orderId: number) => {
+    setCorreoBusyId(orderId)
+    try {
+      await apiRequest<{ ok: true }>(`/api/admin/orders/${orderId}/correo-argentino/cancel`, { method: 'POST' })
+      setOrders((current) => current.map((order) => order.id === orderId ? { ...order, correoArgentino: false, carrier: '', trackingCode: '', trackingUrl: '' } : order))
+      setTrackingDrafts((current) => ({ ...current, [orderId]: { carrier: '', trackingCode: '', trackingUrl: '' } }))
+      setFormError('')
+    } catch (requestError) {
+      setFormError(requestError instanceof Error ? requestError.message : 'No se pudo cancelar el envío.')
+    } finally {
+      setCorreoBusyId(null)
+    }
+  }
+
   const saveSettings = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!settings) return
@@ -382,6 +420,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
 
           <div className="admin-order-panel">
             <div className="admin-order-panel__header"><p className="eyebrow">Pedidos</p><h3>Estado de operaciones</h3></div>
+            {correoStatus && !correoStatus.configured && <p className="admin-form-error" role="status">Correo Argentino sin configurar. Faltan en el .env del servidor: {correoStatus.missing.join(', ')}.</p>}
             <div className="admin-order-list">{orders.length ? orders.map((order) => (
               <article key={order.id} className="admin-order-card">
                 <div className="admin-order-card__meta"><strong>{order.reference}</strong><span>{order.userName} · {order.userEmail}</span></div>
@@ -401,9 +440,17 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
                   <p>{order.items.map((item) => `${item.quantity}× ${item.name} (${item.size})`).join(', ')}</p>
                   {order.status === 'paid' && (
                     <div className="admin-tracking-form">
-                      <input placeholder="Transporte (Andreani, Correo…)" value={trackingDrafts[order.id]?.carrier ?? ''} onChange={(event) => updateTracking(order.id, 'carrier', event.target.value)} />
-                      <input placeholder="Código de seguimiento" value={trackingDrafts[order.id]?.trackingCode ?? ''} onChange={(event) => updateTracking(order.id, 'trackingCode', event.target.value)} />
-                      <input placeholder="Link de seguimiento (opcional)" value={trackingDrafts[order.id]?.trackingUrl ?? ''} onChange={(event) => updateTracking(order.id, 'trackingUrl', event.target.value)} />
+                      {order.shipping.method === 'delivery' && correoStatus?.configured && (
+                        order.correoArgentino
+                          ? <>
+                              <a href={`/api/admin/orders/${order.id}/correo-argentino/label`} target="_blank" rel="noreferrer">Ver rótulo (PDF)</a>
+                              <button type="button" disabled={correoBusyId === order.id} onClick={() => { void cancelCorreoShipment(order.id) }}>Cancelar envío Correo Argentino</button>
+                            </>
+                          : <button type="button" disabled={correoBusyId === order.id} onClick={() => { void createCorreoShipment(order.id) }}>Generar envío Correo Argentino</button>
+                      )}
+                      <input placeholder="Transporte (Andreani, Correo…)" value={trackingDrafts[order.id]?.carrier ?? order.carrier} onChange={(event) => updateTracking(order.id, 'carrier', event.target.value)} />
+                      <input placeholder="Código de seguimiento" value={trackingDrafts[order.id]?.trackingCode ?? order.trackingCode} onChange={(event) => updateTracking(order.id, 'trackingCode', event.target.value)} />
+                      <input placeholder="Link de seguimiento (opcional)" value={trackingDrafts[order.id]?.trackingUrl ?? order.trackingUrl} onChange={(event) => updateTracking(order.id, 'trackingUrl', event.target.value)} />
                       <button type="button" onClick={() => { void setOrderStatus(order.id, 'shipped') }}>Marcar como enviado</button>
                     </div>
                   )}

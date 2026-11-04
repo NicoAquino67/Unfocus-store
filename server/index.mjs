@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import express from 'express'
 import { MercadoPagoConfig, Preference } from 'mercadopago'
 import nodemailer from 'nodemailer'
+import { CorreoArgentinoError, buildOrderPayload, createCorreoArgentinoClient, readCorreoArgentinoConfig } from './correoArgentino.mjs'
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url))
 const projectDirectory = path.resolve(serverDirectory, '..')
@@ -159,6 +160,7 @@ const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().m
     tracking_code: 'TEXT',
     tracking_url: 'TEXT',
     shipped_at: 'TEXT',
+    ca_tracking_number: 'TEXT',
     payment_method: "TEXT NOT NULL DEFAULT 'mercadopago'",
     coupon_code: "TEXT NOT NULL DEFAULT ''",
     discount_ars: 'INTEGER NOT NULL DEFAULT 0',
@@ -916,6 +918,7 @@ const serializeOrder = (order, extra = {}) => ({
   giftCards: ['paid', 'shipped', 'delivered'].includes(order.status) ? database.prepare('SELECT code, initial_ars AS initialArs, balance_ars AS balanceArs FROM gift_cards WHERE order_id = ? ORDER BY id').all(order.id) : [],
   trackingUrl: order.tracking_url ?? '',
   shippedAt: order.shipped_at ?? null,
+  correoArgentino: Boolean(order.ca_tracking_number),
   items: database.prepare('SELECT product_name AS name, product_slug AS slug, image_url AS image, size, quantity, unit_price_ars AS unitPriceArs FROM order_items WHERE order_id = ?').all(order.id),
   ...extra,
 })
@@ -1369,13 +1372,13 @@ app.patch('/api/admin/orders/:id/status', requireAdmin, (request, response) => {
   const status = typeof request.body.status === 'string' ? request.body.status : ''
   if (!Number.isSafeInteger(id)) return response.status(400).json({ error: 'Pedido inválido.' })
   if (!orderStatuses.includes(status)) return response.status(400).json({ error: 'Estado de pedido inválido.' })
-  const order = database.prepare('SELECT id, user_id, reference, status, tracking_code FROM orders WHERE id = ?').get(id)
+  const order = database.prepare('SELECT id, user_id, reference, status, tracking_code, carrier, tracking_url FROM orders WHERE id = ?').get(id)
   if (!order) return response.status(404).json({ error: 'Pedido no encontrado.' })
   const fulfilled = ['paid', 'shipped', 'delivered']
   if ((status === 'shipped' || status === 'delivered') && !fulfilled.includes(order.status)) return response.status(400).json({ error: 'Solo se pueden despachar pedidos pagados.' })
-  const carrier = cleanText(request.body.carrier, 60)
-  const trackingCode = cleanText(request.body.trackingCode, 80)
-  const trackingUrl = cleanText(request.body.trackingUrl, 300)
+  const carrier = cleanText(request.body.carrier, 60) || order.carrier || ''
+  const trackingCode = cleanText(request.body.trackingCode, 80) || order.tracking_code || ''
+  const trackingUrl = cleanText(request.body.trackingUrl, 300) || order.tracking_url || ''
   if (trackingUrl && !/^https?:\/\//i.test(trackingUrl)) return response.status(400).json({ error: 'El enlace de seguimiento debe comenzar con http:// o https://.' })
   const changed = order.status !== status
   if (changed && status === 'cancelled') adjustOrderStock(id, 1)
@@ -1400,6 +1403,77 @@ app.patch('/api/admin/orders/:id/status', requireAdmin, (request, response) => {
   }
   response.json({ ok: true, status, carrier, trackingCode, trackingUrl })
 })
+
+const correoArgentinoConfig = readCorreoArgentinoConfig()
+const correoArgentino = createCorreoArgentinoClient(correoArgentinoConfig)
+const correoArgentinoTrackingUrl = (trackingNumber) => `https://www.correoargentino.com.ar/formularios/e-commerce?id=${encodeURIComponent(trackingNumber)}`
+
+const correoArgentinoRoute = (handler) => async (request, response) => {
+  try {
+    await handler(request, response)
+  } catch (error) {
+    if (!(error instanceof CorreoArgentinoError)) throw error
+    response.status(error.status).json({ error: error.message })
+  }
+}
+
+const loadCorreoArgentinoOrder = (request) => {
+  const id = Number(request.params.id)
+  if (!Number.isSafeInteger(id)) throw new CorreoArgentinoError('Pedido inválido.', 400)
+  const order = database.prepare('SELECT o.*, u.email AS user_email FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id = ?').get(id)
+  if (!order) throw new CorreoArgentinoError('Pedido no encontrado.', 404)
+  return order
+}
+
+app.get('/api/admin/correo-argentino/status', requireAdmin, correoArgentinoRoute(async (request, response) => {
+  const configured = correoArgentinoConfig.missing.length === 0
+  let credentialsValid = null
+  if (configured && request.query.check === '1') {
+    try { credentialsValid = await correoArgentino.validateCredentials() } catch { credentialsValid = false }
+  }
+  response.json({ configured, missing: correoArgentinoConfig.missing, environment: correoArgentinoConfig.environment, credentialsValid })
+}))
+
+app.get('/api/admin/correo-argentino/agencies', requireAdmin, correoArgentinoRoute(async (request, response) => {
+  const flag = (value) => value === 'true' || value === 'false' ? value : undefined
+  const stateId = typeof request.query.stateId === 'string' ? request.query.stateId.slice(0, 6) : undefined
+  response.json({ agencies: await correoArgentino.getAgencies({ stateId, pickupAvailability: flag(request.query.pickupAvailability), packageReception: flag(request.query.packageReception) }) })
+}))
+
+app.post('/api/admin/orders/:id/correo-argentino', requireAdmin, correoArgentinoRoute(async (request, response) => {
+  const order = loadCorreoArgentinoOrder(request)
+  if (order.status !== 'paid') throw new CorreoArgentinoError('Solo se puede generar el envío de pedidos pagados.', 400)
+  if (order.shipping_method !== 'delivery') throw new CorreoArgentinoError('El pedido no es un envío a domicilio.', 400)
+  if (order.ca_tracking_number) throw new CorreoArgentinoError('El pedido ya tiene un envío generado en Correo Argentino.', 400)
+  const { trackingNumber } = await correoArgentino.createOrder(buildOrderPayload(correoArgentinoConfig, order))
+  const trackingUrl = correoArgentinoTrackingUrl(trackingNumber)
+  database.prepare('UPDATE orders SET ca_tracking_number = ?, carrier = ?, tracking_code = ?, tracking_url = ? WHERE id = ?').run(trackingNumber, 'Correo Argentino', trackingNumber, trackingUrl, order.id)
+  response.json({ ok: true, carrier: 'Correo Argentino', trackingCode: trackingNumber, trackingUrl })
+}))
+
+app.get('/api/admin/orders/:id/correo-argentino/label', requireAdmin, correoArgentinoRoute(async (request, response) => {
+  const order = loadCorreoArgentinoOrder(request)
+  if (!order.ca_tracking_number) throw new CorreoArgentinoError('El pedido no tiene un envío generado en Correo Argentino.', 400)
+  const { pdf, fileName } = await correoArgentino.getLabel(order.ca_tracking_number, '', request.query.format === 'label' ? 'label' : '10x15')
+  response.setHeader('Content-Type', 'application/pdf')
+  response.setHeader('Content-Disposition', `inline; filename="${fileName.replace(/[^\w.-]/g, '_')}"`)
+  response.send(pdf)
+}))
+
+app.get('/api/admin/orders/:id/correo-argentino/tracking', requireAdmin, correoArgentinoRoute(async (request, response) => {
+  const order = loadCorreoArgentinoOrder(request)
+  if (!order.ca_tracking_number) throw new CorreoArgentinoError('El pedido no tiene un envío generado en Correo Argentino.', 400)
+  response.json(await correoArgentino.getTracking(order.ca_tracking_number))
+}))
+
+app.post('/api/admin/orders/:id/correo-argentino/cancel', requireAdmin, correoArgentinoRoute(async (request, response) => {
+  const order = loadCorreoArgentinoOrder(request)
+  if (!order.ca_tracking_number) throw new CorreoArgentinoError('El pedido no tiene un envío generado en Correo Argentino.', 400)
+  if (order.status === 'shipped' || order.status === 'delivered') throw new CorreoArgentinoError('El pedido ya fue despachado y no se puede cancelar el envío.', 400)
+  await correoArgentino.cancelOrder(order.ca_tracking_number)
+  database.prepare("UPDATE orders SET ca_tracking_number = NULL, carrier = '', tracking_code = '', tracking_url = '' WHERE id = ?").run(order.id)
+  response.json({ ok: true })
+}))
 
 app.get('/api/products/:slug/reviews', (request, response) => {
   const product = selectProductBySlug.get(request.params.slug)
@@ -1586,6 +1660,8 @@ await new Promise((resolve) => app.listen(port, '0.0.0.0', resolve))
 console.log(`UnFocus API listening on http://localhost:${port}`)
 console.log(`SQLite database: ${databasePath}`)
 if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) console.log('No admin bootstrap configured. Set ADMIN_EMAIL and ADMIN_PASSWORD in .env to create/promote an administrator.')
+if (correoArgentinoConfig.missing.length) console.log(`Correo Argentino desactivado. Faltan en .env: ${correoArgentinoConfig.missing.join(', ')}`)
+else console.log(`Correo Argentino activo (${correoArgentinoConfig.environment}).`)
 
 const shutdown = () => {
   database.close()

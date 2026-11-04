@@ -1,6 +1,33 @@
 ﻿UnFocus · Checklist (comparativa con nike.com)
 
-Leyenda: [x] hecho · [ ] pendiente
+Leyenda: [x] hecho · [~] hecho en código, requiere acción tuya · [ ] pendiente
+
+========================================
+>>> ACCIONES TUYAS: CORREO ARGENTINO (hacelas en este orden) <<<
+========================================
+[ ] 1. Pedir al área Comercial de Correo Argentino el acceso a la API Paq.ar 2.0 y que te entreguen: API-Key y código de acuerdo (agreement), para TEST y para PRODUCCIÓN. Consultar también qué serviceType te corresponde (CP = clásico) y el peso/medidas máximos de tu acuerdo.
+[ ] 2. En .env (local) completar: CORREO_ARGENTINO_API_KEY y CORREO_ARGENTINO_AGREEMENT (dejar CORREO_ARGENTINO_ENVIRONMENT=test mientras pruebes)
+[ ] 3. En .env completar los datos del remitente (tu tienda): CORREO_SENDER_NAME, CORREO_SENDER_EMAIL, CORREO_SENDER_AREA_CODE, CORREO_SENDER_PHONE, CORREO_SENDER_STREET, CORREO_SENDER_STREET_NUMBER, CORREO_SENDER_CITY, CORREO_SENDER_PROVINCE_CODE (letra: B, C, X, S...), CORREO_SENDER_ZIP_CODE (CPA, ej. C1000AAA)
+[ ] 4. En .env ajustar el paquete estándar: CORREO_PARCEL_WEIGHT_GRAMS / HEIGHT_CM / WIDTH_CM / DEPTH_CM (hoy 400 g y 5x25x35 cm, valores de ejemplo para una remera)
+[ ] 5. Reiniciar el servidor (npm run dev). Al arrancar debe decir "Correo Argentino activo (test)". Si dice "desactivado", lista las variables que faltan; el panel admin → Pedidos también muestra el aviso.
+[ ] 6. Probar en TEST: hacer un pedido con envío a domicilio, marcarlo como Pagado y tocar "Generar envío Correo Argentino" → "Ver rótulo (PDF)" → "Marcar como enviado". Verificar que el código de seguimiento llega al cliente.
+[ ] 7. Pasar a producción: cargar las credenciales de PRODUCCIÓN en las variables de entorno del hosting y poner CORREO_ARGENTINO_ENVIRONMENT=production (las variables NO van al repositorio; .env está ignorado por git)
+[ ] 8. Si la API de Correo responde error de validación (400) con tus datos reales, pasame el mensaje para ajustar el mapeo (el manual no detalla todos los valores válidos, p. ej. serviceType).
+[ ] 9. (Opcional, lo dejé sin hacer) Envío a sucursal/locker: el endpoint GET /api/admin/correo-argentino/agencies ya existe, falta el selector de sucursal en el checkout.
+
+========================================
+CORREO ARGENTINO · IMPLEMENTADO EN CÓDIGO (rama dev)
+========================================
+[x] Cliente de la API Paq.ar v1 (server/correoArgentino.mjs): autenticación Apikey + agreement, test/producción
+[x] Alta de orden (POST /v1/orders) con mapeo de pedido → remitente, destinatario, paquete, provincia a código, CP y calle/altura/piso
+[x] Cancelación de orden (PATCH /v1/orders/{tn}/cancel)
+[x] Rótulo en PDF (POST /v1/labels, formato 10x15)
+[x] Consulta de historial (GET /v1/tracking) y de sucursales (GET /v1/agencies)
+[x] Validación de credenciales (GET /v1/auth) desde /api/admin/correo-argentino/status?check=1
+[x] Endpoints admin protegidos: /api/admin/orders/:id/correo-argentino (+ /label, /tracking, /cancel)
+[x] Panel admin: aviso de variables faltantes, botones Generar envío / Ver rótulo / Cancelar envío
+[x] El código de seguimiento y el link de Correo Argentino se precargan y llegan al cliente al marcar como enviado
+[x] Variables documentadas en .env.example y tests automáticos (npm test)
 
 ========================================
 A. MVP PARA SALIR A PRODUCCIÓN Y VENDER
@@ -39,7 +66,7 @@ Pedidos y logística
 [x] Transporte, código y link de seguimiento visibles para el cliente
 [x] Panel admin: pedidos con dirección de entrega y formulario de despacho
 [x] Restaurar stock cuando el admin cancela un pedido manualmente (hoy solo lo hace la cancelación automática)
-[ ] Etiquetas de envío / integración con un correo (Andreani, Correo Argentino…)
+[~] Etiquetas de envío / integración con Correo Argentino: código listo en dev, faltan tus credenciales (ver ACCIONES TUYAS arriba)
 
 Emails transaccionales
 [x] Pago recibido, pedido despachado, pedido cancelado, recuperación de contraseña, contacto
@@ -89,7 +116,7 @@ Checkout
 [x] Tarjeta de regalo
 [ ] Múltiples direcciones guardadas en la cuenta
 [ ] Recuperación de carrito abandonado por email
-[ ] Seguimiento de envío integrado con el transporte
+[~] Seguimiento de envío integrado con el transporte: consulta por API lista en /api/admin/orders/:id/correo-argentino/tracking; falta mostrarla al cliente y tus credenciales
 
 Cuenta y fidelización
 [ ] Programa de membresía / puntos

@@ -47,6 +47,7 @@ export type AccountOrder = {
   trackingCode: string
   trackingUrl: string
   shippedAt: string | null
+  correoArgentino?: boolean
   items: AccountOrderItem[]
   couponCode?: string
   discountArs?: number
