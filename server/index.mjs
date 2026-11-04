@@ -1059,7 +1059,7 @@ app.post('/api/products/:slug/restock-notifications', limitRestockRequests, (req
   if (!product || product.is_gift_card) return response.status(404).json({ error: 'Producto no encontrado.' })
   const email = typeof request.body?.email === 'string' ? request.body.email.trim().toLowerCase() : ''
   const size = typeof request.body?.size === 'string' ? request.body.size.trim().toUpperCase() : ''
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || !/^(XS|S|M|L|XL|2XL|3XL)$/.test(size)) {
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^(XS|S|M|L|XL|2XL|3XL)$/.test(size)) {
     return response.status(400).json({ error: 'Ingresa un correo válido y selecciona un talle.' })
   }
   const stockBySize = JSON.parse(product.stock_by_size || '{}')
