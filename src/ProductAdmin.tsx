@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowLeft, Check, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import AdminCoupons from './AdminCoupons'
 import AdminGiftCards from './AdminGiftCards'
-import { apiRequest, type AdminOrder, type AdminSummary, type ContactMessage, type NewsletterSubscriber, type OrderStatus, type StoreSettings } from './api'
+import { apiRequest, type AdminOrder, type AdminReport, type AdminSummary, type ContactMessage, type NewsletterSubscriber, type OrderStatus, type StoreSettings } from './api'
 import { formatPrice, getSalePrice, hasDiscount, getProductFacets, getProductImage, garmentCuts, productAudiences, productGenders, productFacetTag, sizes, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
 import './ProductAdmin.css'
 
@@ -111,6 +111,30 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
   const [settings, setSettings] = useState<StoreSettings | null>(null)
   const [settingsMessage, setSettingsMessage] = useState('')
   const [trackingDrafts, setTrackingDrafts] = useState<Record<number, { carrier: string; trackingCode: string; trackingUrl: string }>>({})
+  const [correoStatus, setCorreoStatus] = useState<{ configured: boolean; missing: string[]; environment: string } | null>(null)
+  const [correoBusyId, setCorreoBusyId] = useState<number | null>(null)
+  const [miCorreoStatus, setMiCorreoStatus] = useState<{ configured: boolean; missing: string[]; environment: string } | null>(null)
+  const [reportDays, setReportDays] = useState(30)
+  const [report, setReport] = useState<AdminReport | null>(null)
+
+  useEffect(() => {
+    let isCurrent = true
+    apiRequest<AdminReport>(`/api/admin/reports?days=${reportDays}`)
+      .then((result) => { if (isCurrent) setReport(result) })
+      .catch(() => undefined)
+    return () => { isCurrent = false }
+  }, [reportDays])
+
+  useEffect(() => {
+    let isCurrent = true
+    apiRequest<{ configured: boolean; missing: string[]; environment: string }>('/api/admin/correo-argentino/status')
+      .then((status) => { if (isCurrent) setCorreoStatus(status) })
+      .catch(() => undefined)
+    apiRequest<{ configured: boolean; missing: string[]; environment: string }>('/api/admin/micorreo/status')
+      .then((status) => { if (isCurrent) setMiCorreoStatus(status) })
+      .catch(() => undefined)
+    return () => { isCurrent = false }
+  }, [])
 
   useEffect(() => {
     let isCurrent = true
@@ -255,6 +279,47 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
     }
   }
 
+  const createCorreoShipment = async (orderId: number) => {
+    setCorreoBusyId(orderId)
+    try {
+      const result = await apiRequest<{ carrier: string; trackingCode: string; trackingUrl: string }>(`/api/admin/orders/${orderId}/correo-argentino`, { method: 'POST' })
+      setOrders((current) => current.map((order) => order.id === orderId ? { ...order, ...result, correoArgentino: true } : order))
+      setTrackingDrafts((current) => ({ ...current, [orderId]: result }))
+      setFormError('')
+    } catch (requestError) {
+      setFormError(requestError instanceof Error ? requestError.message : 'No se pudo generar el envío.')
+    } finally {
+      setCorreoBusyId(null)
+    }
+  }
+
+  const importToMiCorreo = async (orderId: number) => {
+    setCorreoBusyId(orderId)
+    try {
+      await apiRequest<{ ok: true }>(`/api/admin/orders/${orderId}/micorreo/import`, { method: 'POST' })
+      setOrders((current) => current.map((order) => order.id === orderId ? { ...order, miCorreoImported: true } : order))
+      setFormError('')
+    } catch (requestError) {
+      setFormError(requestError instanceof Error ? requestError.message : 'No se pudo importar el pedido a MiCorreo.')
+    } finally {
+      setCorreoBusyId(null)
+    }
+  }
+
+  const cancelCorreoShipment = async (orderId: number) => {
+    setCorreoBusyId(orderId)
+    try {
+      await apiRequest<{ ok: true }>(`/api/admin/orders/${orderId}/correo-argentino/cancel`, { method: 'POST' })
+      setOrders((current) => current.map((order) => order.id === orderId ? { ...order, correoArgentino: false, carrier: '', trackingCode: '', trackingUrl: '' } : order))
+      setTrackingDrafts((current) => ({ ...current, [orderId]: { carrier: '', trackingCode: '', trackingUrl: '' } }))
+      setFormError('')
+    } catch (requestError) {
+      setFormError(requestError instanceof Error ? requestError.message : 'No se pudo cancelar el envío.')
+    } finally {
+      setCorreoBusyId(null)
+    }
+  }
+
   const saveSettings = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!settings) return
@@ -304,6 +369,34 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
           <div className="admin-card"><span>Pendientes</span><strong>{summary?.pending ?? 0}</strong></div>
           <div className="admin-card"><span>Pagados</span><strong>{summary?.paid ?? 0}</strong></div>
           <div className="admin-card"><span>Inventario</span><strong>{formatPrice(inventoryValue)}</strong></div>
+        </section>
+      )}
+
+      {!draft && report && (
+        <section className="admin-reports" aria-labelledby="reports-title">
+          <div className="admin-reports__heading">
+            <h2 id="reports-title">Reportes</h2>
+            <label>Período <select value={reportDays} onChange={(event) => setReportDays(Number(event.target.value))}><option value={7}>7 días</option><option value={30}>30 días</option><option value={90}>90 días</option></select></label>
+          </div>
+          <div className="admin-summary-grid">
+            <div className="admin-card"><span>Pedidos pagados</span><strong>{report.orders}</strong></div>
+            <div className="admin-card"><span>Ingresos</span><strong>{formatPrice(report.revenue)}</strong></div>
+            <div className="admin-card"><span>Ticket promedio</span><strong>{formatPrice(report.averageOrder)}</strong></div>
+          </div>
+          <div className="admin-reports__tables">
+            <div>
+              <h3>Más vendidos</h3>
+              {report.topProducts.length === 0 ? <p>Sin ventas en el período.</p> : <ul>{report.topProducts.map((item) => <li key={item.name}><span>{item.name}</span><strong>{item.units} u. · {formatPrice(item.revenue)}</strong></li>)}</ul>}
+            </div>
+            <div>
+              <h3>Stock bajo (≤ {report.lowStockThreshold} u.)</h3>
+              {report.lowStock.length === 0 ? <p>Todo el stock está por encima del mínimo.</p> : <ul>{report.lowStock.map((item) => <li key={`${item.productId}-${item.size}`}><span>{item.name} · talle {item.size}</span><strong>{item.stock === 0 ? 'Agotado' : `${item.stock} u.`}</strong></li>)}</ul>}
+            </div>
+            <div>
+              <h3>Ventas por día</h3>
+              {report.daily.length === 0 ? <p>Sin ventas en el período.</p> : <ul>{report.daily.map((item) => <li key={item.day}><span>{item.day}</span><strong>{item.orders} ped. · {formatPrice(item.revenue)}</strong></li>)}</ul>}
+            </div>
+          </div>
         </section>
       )}
 
@@ -382,6 +475,8 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
 
           <div className="admin-order-panel">
             <div className="admin-order-panel__header"><p className="eyebrow">Pedidos</p><h3>Estado de operaciones</h3></div>
+            {correoStatus && !correoStatus.configured && <p className="admin-form-error" role="status">Correo Argentino sin configurar. Faltan en el .env del servidor: {correoStatus.missing.join(', ')}.</p>}
+            {miCorreoStatus && !miCorreoStatus.configured && <p className="admin-form-error" role="status">MiCorreo sin configurar (el checkout usa la tarifa fija). Faltan en el .env del servidor: {miCorreoStatus.missing.join(', ')}.</p>}
             <div className="admin-order-list">{orders.length ? orders.map((order) => (
               <article key={order.id} className="admin-order-card">
                 <div className="admin-order-card__meta"><strong>{order.reference}</strong><span>{order.userName} · {order.userEmail}</span></div>
@@ -401,9 +496,22 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
                   <p>{order.items.map((item) => `${item.quantity}× ${item.name} (${item.size})`).join(', ')}</p>
                   {order.status === 'paid' && (
                     <div className="admin-tracking-form">
-                      <input placeholder="Transporte (Andreani, Correo…)" value={trackingDrafts[order.id]?.carrier ?? ''} onChange={(event) => updateTracking(order.id, 'carrier', event.target.value)} />
-                      <input placeholder="Código de seguimiento" value={trackingDrafts[order.id]?.trackingCode ?? ''} onChange={(event) => updateTracking(order.id, 'trackingCode', event.target.value)} />
-                      <input placeholder="Link de seguimiento (opcional)" value={trackingDrafts[order.id]?.trackingUrl ?? ''} onChange={(event) => updateTracking(order.id, 'trackingUrl', event.target.value)} />
+                      {order.shipping.method === 'delivery' && correoStatus?.configured && (
+                        order.correoArgentino
+                          ? <>
+                              <a href={`/api/admin/orders/${order.id}/correo-argentino/label`} target="_blank" rel="noreferrer">Ver rótulo (PDF)</a>
+                              <button type="button" disabled={correoBusyId === order.id} onClick={() => { void cancelCorreoShipment(order.id) }}>Cancelar envío Correo Argentino</button>
+                            </>
+                          : <button type="button" disabled={correoBusyId === order.id} onClick={() => { void createCorreoShipment(order.id) }}>Generar envío Correo Argentino</button>
+                      )}
+                      {order.shipping.method === 'delivery' && miCorreoStatus?.configured && !order.correoArgentino && (
+                        order.miCorreoImported
+                          ? <span>Importado a MiCorreo: despáchalo desde el portal y pega acá el seguimiento.</span>
+                          : <button type="button" disabled={correoBusyId === order.id} onClick={() => { void importToMiCorreo(order.id) }}>Importar a MiCorreo</button>
+                      )}
+                      <input placeholder="Transporte (Andreani, Correo…)" value={trackingDrafts[order.id]?.carrier ?? order.carrier} onChange={(event) => updateTracking(order.id, 'carrier', event.target.value)} />
+                      <input placeholder="Código de seguimiento" value={trackingDrafts[order.id]?.trackingCode ?? order.trackingCode} onChange={(event) => updateTracking(order.id, 'trackingCode', event.target.value)} />
+                      <input placeholder="Link de seguimiento (opcional)" value={trackingDrafts[order.id]?.trackingUrl ?? order.trackingUrl} onChange={(event) => updateTracking(order.id, 'trackingUrl', event.target.value)} />
                       <button type="button" onClick={() => { void setOrderStatus(order.id, 'shipped') }}>Marcar como enviado</button>
                     </div>
                   )}

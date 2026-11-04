@@ -144,3 +144,9 @@
 .admin-gallery__item--add { align-self: stretch; }
 .admin-gallery__add { display: grid; place-content: center; justify-items: center; gap: 8px; min-height: 140px; height: 100%; border: 2px dashed var(--line); color: var(--brand-blue-deep); font-size: 12px; font-weight: 600; cursor: pointer; text-align: center; }
 .admin-gallery__add:hover { background: var(--paper); }
+.admin-reports { margin: 24px 0; }
+.admin-reports__heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.admin-reports__tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; margin-top: 20px; }
+.admin-reports h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; }
+.admin-reports ul { margin: 0; padding: 0; list-style: none; max-height: 260px; overflow: auto; }
+.admin-reports li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }

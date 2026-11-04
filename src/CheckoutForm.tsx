@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
-import { apiRequest, type AccountUser, type SavedAddress, type ShippingDetails, type StoreConfig } from './api'
+import { apiRequest, type AccountUser, type SavedAddress, type ShippingDetails, type ShippingRate, type StoreConfig } from './api'
 
 export type PaymentMethod = 'mercadopago' | 'transfer'
 export type GuestDetails = { name: string; email: string; phone: string }
@@ -37,6 +37,8 @@ function CheckoutForm({ user, subtotal, digitalOnly, items, shipping, transfer, 
   const [guestEmail, setGuestEmail] = useState('')
   const [acceptTerms, setAcceptTerms] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('mercadopago')
+  const [quote, setQuote] = useState<{ rates: ShippingRate[]; loading: boolean; error: string }>({ rates: [], loading: false, error: '' })
+  const [rateType, setRateType] = useState('CP')
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([])
   const [selectedAddressId, setSelectedAddressId] = useState('')
   const [addressLoadError, setAddressLoadError] = useState('')
@@ -67,8 +69,25 @@ function CheckoutForm({ user, subtotal, digitalOnly, items, shipping, transfer, 
     return () => { isCurrent = false }
   }, [canPickup, isGuest])
 
+  const postalDigits = form.postalCode.match(/\d{4}/)?.[0] ?? ''
+  const quoteEnabled = !digitalOnly && form.method === 'delivery' && postalDigits.length === 4
+  useEffect(() => {
+    if (!quoteEnabled) return
+    let isCurrent = true
+    const timer = window.setTimeout(() => {
+      setQuote((current) => ({ ...current, loading: true }))
+      apiRequest<{ available: boolean; rates: ShippingRate[] }>('/api/shipping/quote', { method: 'POST', body: JSON.stringify({ items, postalCode: postalDigits }) })
+        .then((result) => { if (isCurrent) setQuote({ rates: result.available ? result.rates : [], loading: false, error: '' }) })
+        .catch((requestError) => { if (isCurrent) setQuote({ rates: [], loading: false, error: requestError instanceof Error ? requestError.message : '' }) })
+    }, 400)
+    return () => { isCurrent = false; window.clearTimeout(timer) }
+  }, [quoteEnabled, postalDigits, items])
+
   const discount = Math.min(appliedCoupon?.discountArs ?? 0, subtotal)
-  const shippingCost = digitalOnly ? 0 : calculateShipping(subtotal - discount, form.method, shipping)
+  const isDeliveryMethod = !digitalOnly && form.method === 'delivery'
+  const quotedRate = quoteEnabled ? quote.rates.find((rate) => rate.productType === rateType) ?? quote.rates[0] : undefined
+  const freeShipping = Boolean(shipping && shipping.freeThresholdArs > 0 && subtotal >= shipping.freeThresholdArs)
+  const shippingCost = digitalOnly ? 0 : isDeliveryMethod && quotedRate ? (freeShipping ? 0 : quotedRate.priceArs) : calculateShipping(subtotal - discount, form.method, shipping)
   const giftDiscount = Math.min(appliedGift?.balanceArs ?? 0, subtotal - discount + shippingCost)
   const applyGiftCard = async () => {
     setGiftMessage('')
@@ -99,7 +118,7 @@ function CheckoutForm({ user, subtotal, digitalOnly, items, shipping, transfer, 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     onSubmit({
-      shipping: digitalOnly ? { ...form, method: 'digital' as ShippingDetails['method'] } : form,
+      shipping: digitalOnly ? { ...form, method: 'digital' as ShippingDetails['method'] } : { ...form, ...(isDeliveryMethod && quotedRate ? { rateType: quotedRate.productType } : {}) },
       acceptTerms,
       paymentMethod: paymentMethod === 'transfer' && !transfer ? 'mercadopago' : paymentMethod,
       ...(appliedGift ? { giftCardCode: appliedGift.code } : {}),
@@ -152,6 +171,18 @@ function CheckoutForm({ user, subtotal, digitalOnly, items, shipping, transfer, 
             <label><span>Código postal</span><input required minLength={4} maxLength={10} autoComplete="postal-code" value={form.postalCode} onChange={(event) => update('postalCode', event.target.value)} /></label>
           </div>
           <label><span>Provincia</span><select required value={form.province} onChange={(event) => update('province', event.target.value)}><option value="">Selecciona</option>{provinces.map((province) => <option key={province} value={province}>{province}</option>)}</select></label>
+          {quoteEnabled && quote.loading && <p className="checkout-form__hint">Cotizando envío con Correo Argentino…</p>}
+          {quoteEnabled && !quote.loading && quote.error && <p className="checkout-form__hint">{quote.error}</p>}
+          {quoteEnabled && !quote.loading && quote.rates.length > 0 && (
+            <fieldset className="checkout-form__methods">
+              <legend>Envío a domicilio con Correo Argentino</legend>
+              {quote.rates.map((rate) => (
+                <label key={rate.productType}>
+                  <input type="radio" name="rate" checked={quotedRate?.productType === rate.productType} onChange={() => setRateType(rate.productType)} /> {rate.productName} · {freeShipping ? 'Sin cargo' : formatPrice(rate.priceArs, currency, usdArsRate)}{rate.deliveryTimeMin && rate.deliveryTimeMax ? ` · ${rate.deliveryTimeMin} a ${rate.deliveryTimeMax} días hábiles` : ''}
+                </label>
+              ))}
+            </fieldset>
+          )}
         </>
       )}
       <label><span>Indicaciones (opcional)</span><textarea rows={2} maxLength={200} value={form.notes} onChange={(event) => update('notes', event.target.value)} placeholder="Horario, referencias, timbre…" /></label>

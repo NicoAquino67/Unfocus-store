@@ -1,6 +1,56 @@
-﻿UnFocus · Checklist (comparativa con nike.com)
+UnFocus · Checklist (comparativa con nike.com)
 
-Leyenda: [x] hecho · [ ] pendiente
+Leyenda: [x] hecho · [~] hecho en código, requiere acción tuya · [ ] pendiente
+
+========================================
+>>> ACCIONES TUYAS: CORREO ARGENTINO (hacelas en este orden) <<<
+========================================
+[ ] 1. Pedir al área Comercial de Correo Argentino el acceso a la API Paq.ar 2.0 y que te entreguen: API-Key y código de acuerdo (agreement), para TEST y para PRODUCCIÓN. Consultar también qué serviceType te corresponde (CP = clásico) y el peso/medidas máximos de tu acuerdo.
+[ ] 2. En .env (local) completar: CORREO_ARGENTINO_API_KEY y CORREO_ARGENTINO_AGREEMENT (dejar CORREO_ARGENTINO_ENVIRONMENT=test mientras pruebes)
+[ ] 3. En .env completar los datos del remitente (tu tienda): CORREO_SENDER_NAME, CORREO_SENDER_EMAIL, CORREO_SENDER_AREA_CODE, CORREO_SENDER_PHONE, CORREO_SENDER_STREET, CORREO_SENDER_STREET_NUMBER, CORREO_SENDER_CITY, CORREO_SENDER_PROVINCE_CODE (letra: B, C, X, S...), CORREO_SENDER_ZIP_CODE (CPA, ej. C1000AAA)
+[ ] 4. En .env ajustar el paquete estándar: CORREO_PARCEL_WEIGHT_GRAMS / HEIGHT_CM / WIDTH_CM / DEPTH_CM (hoy 400 g y 5x25x35 cm, valores de ejemplo para una remera)
+[ ] 5. Reiniciar el servidor (npm run dev). Al arrancar debe decir "Correo Argentino activo (test)". Si dice "desactivado", lista las variables que faltan; el panel admin → Pedidos también muestra el aviso.
+[ ] 6. Probar en TEST: hacer un pedido con envío a domicilio, marcarlo como Pagado y tocar "Generar envío Correo Argentino" → "Ver rótulo (PDF)" → "Marcar como enviado". Verificar que el código de seguimiento llega al cliente.
+[ ] 7. Pasar a producción: cargar las credenciales de PRODUCCIÓN en las variables de entorno del hosting y poner CORREO_ARGENTINO_ENVIRONMENT=production (las variables NO van al repositorio; .env está ignorado por git)
+[ ] 8. Si la API de Correo responde error de validación (400) con tus datos reales, pasame el mensaje para ajustar el mapeo (el manual no detalla todos los valores válidos, p. ej. serviceType).
+[ ] 9. (Opcional, lo dejé sin hacer) Envío a sucursal/locker: el endpoint GET /api/admin/correo-argentino/agencies ya existe, falta el selector de sucursal en el checkout.
+
+========================================
+>>> ACCIONES TUYAS: MICORREO (cotización de envío en el checkout) <<<
+========================================
+[ ] M1. Pedir a Correo Argentino las credenciales de la API MiCorreo (usuario y contraseña de API) para TEST y para PRODUCCIÓN.
+[ ] M2. Tener un usuario MiCorreo (empresa con CUIT) y obtener su customerId con POST /users/validate (email + contraseña de MiCorreo).
+[ ] M3. En .env completar: MICORREO_USER, MICORREO_PASSWORD, MICORREO_CUSTOMER_ID y MICORREO_ORIGIN_POSTAL_CODE (CP de 4 dígitos desde donde despachas). Dejar MICORREO_ENVIRONMENT=test mientras pruebes.
+[ ] M4. Los datos del remitente (CORREO_SENDER_*) y el paquete (CORREO_PARCEL_*) se comparten con Paq.ar: completarlos si no lo hiciste (peso/medidas de UNA prenda; el checkout las apila por cantidad).
+[ ] M5. Reiniciar el servidor. Debe decir "MiCorreo activo (test)". En el checkout, al escribir el código postal aparece "Correo Argentino Clásico" con precio y plazo.
+[ ] M6. Probar en TEST: pedido con envío a domicilio → marcar Pagado → "Importar a MiCorreo" en admin → despacharlo desde el portal MiCorreo → pegar el código de seguimiento y "Marcar como enviado".
+[ ] M7. Producción: cargar credenciales de PRODUCCIÓN en las variables del hosting y MICORREO_ENVIRONMENT=production (las variables NO van al repositorio).
+[ ] M8. Decidir si usás MiCorreo (cotiza e importa; el despacho/rótulo se hace en el portal) o Paq.ar (genera rótulo y cancela por API, requiere contrato). Pueden convivir: si el pedido se generó con Paq.ar, no se ofrece importarlo a MiCorreo.
+
+========================================
+MICORREO · IMPLEMENTADO EN CÓDIGO (rama dev)
+========================================
+[x] Cliente API MiCorreo (server/miCorreo.mjs): token JWT con caché (Basic auth), tarifas, sucursales, importar envío, seguimiento
+[x] Cotización en vivo en el checkout: POST /api/shipping/quote (con límite de uso) y selector de modalidad con precio y plazo
+[x] El servidor vuelve a cotizar al crear el pedido (el cliente no define el precio) y respeta "envío gratis desde"; si MiCorreo no responde usa la tarifa fija
+[x] Admin: botón "Importar a MiCorreo" (POST /api/admin/orders/:id/micorreo/import), estado y seguimiento (/micorreo/tracking), aviso de variables faltantes
+[x] Validaciones locales (peso/medidas máximos, provincia, email) y manejo de errores inconsistentes de la API
+[x] Variables en .env.example y tests automáticos (npm test)
+[ ] (Opcional) Envío a sucursal: GET /api/admin/micorreo/agencies ya existe, falta el selector en el checkout.
+
+========================================
+CORREO ARGENTINO · IMPLEMENTADO EN CÓDIGO (rama dev)
+========================================
+[x] Cliente de la API Paq.ar v1 (server/correoArgentino.mjs): autenticación Apikey + agreement, test/producción
+[x] Alta de orden (POST /v1/orders) con mapeo de pedido → remitente, destinatario, paquete, provincia a código, CP y calle/altura/piso
+[x] Cancelación de orden (PATCH /v1/orders/{tn}/cancel)
+[x] Rótulo en PDF (POST /v1/labels, formato 10x15)
+[x] Consulta de historial (GET /v1/tracking) y de sucursales (GET /v1/agencies)
+[x] Validación de credenciales (GET /v1/auth) desde /api/admin/correo-argentino/status?check=1
+[x] Endpoints admin protegidos: /api/admin/orders/:id/correo-argentino (+ /label, /tracking, /cancel)
+[x] Panel admin: aviso de variables faltantes, botones Generar envío / Ver rótulo / Cancelar envío
+[x] El código de seguimiento y el link de Correo Argentino se precargan y llegan al cliente al marcar como enviado
+[x] Variables documentadas en .env.example y tests automáticos (npm test)
 
 ========================================
 A. MVP PARA SALIR A PRODUCCIÓN Y VENDER
@@ -39,7 +89,7 @@ Pedidos y logística
 [x] Transporte, código y link de seguimiento visibles para el cliente
 [x] Panel admin: pedidos con dirección de entrega y formulario de despacho
 [x] Restaurar stock cuando el admin cancela un pedido manualmente (hoy solo lo hace la cancelación automática)
-[ ] Etiquetas de envío / integración con Correo Argentino (requiere credenciales y acceso a su API)
+[~] Etiquetas de envío / integración con Correo Argentino: código listo en dev, faltan tus credenciales (ver ACCIONES TUYAS arriba)
 [ ] generacion de codigo de regalo
 
 Emails transaccionales
@@ -61,8 +111,8 @@ Despliegue
 [ ] Elegir hosting con almacenamiento persistente (SQLite + uploads) y HTTPS
 [ ] Variables de producción: NODE_ENV=production, PUBLIC_BASE_URL, ADMIN_EMAIL/ADMIN_PASSWORD, credenciales de Mercado Pago de producción
 [ ] Quitar MP_WEBHOOK_URL en producción (se usa PUBLIC_BASE_URL/api/payments/webhook)
-[ ] Dominio y certificado (unfocus.shop)
-[ ] Backups automáticos de la base de datos en producción
+[X] Dominio y certificado (unfocus.shop)
+[X] Backups automáticos de la base de datos en producción
 [x] Subir el repositorio a GitHub
 
 ========================================
@@ -73,7 +123,7 @@ Descubrimiento
 [x] Buscador global con sugerencias
 [ ] Categorías y navegación por menús (hombre / mujer / niños / novedades / ofertas)
 [x] Ordenar por precio, novedad y popularidad
-[ ] Paginación o carga infinita
+[x] Paginación o carga infinita
 [ ] Colores y variantes de producto
 [ ] Productos relacionados y "completa el look"
 [x] Vistos recientemente
@@ -82,8 +132,8 @@ Descubrimiento
 Ficha de producto
 [x] Zoom y más imágenes por producto (3 a 10; video pendiente)
 [x] Aviso "volver a tener stock" por email
-[ ] Calculadora de envío por código postal en la ficha (estimación con tarifa fija disponible; cotización real por API pendiente de credenciales)
-[ ] Estimación de fecha de entrega
+[x] Calculadora de envío por código postal en la ficha
+[x] Estimación de fecha de entrega
 [x] Preguntas y respuestas
 
 Checkout
@@ -92,7 +142,7 @@ Checkout
 [x] Tarjeta de regalo
 [x] Múltiples direcciones guardadas en la cuenta y selección en el checkout
 [ ] Recuperación de carrito abandonado por email
-[ ] Seguimiento de envío integrado con el transporte (vista de estado y enlace manual ya disponible; consulta automática por API pendiente de credenciales)
+[~] Seguimiento de envío integrado con el transporte: consulta por API lista en /api/admin/orders/:id/correo-argentino/tracking; falta mostrarla al cliente y tus credenciales
 
 Cuenta y fidelización
 [ ] Programa de membresía / puntos
@@ -101,14 +151,14 @@ Cuenta y fidelización
 [ ] Comprobante / factura electrónica (AFIP)
 
 Marketing y SEO
-[ ] SEO: meta tags por producto, sitemap, datos estructurados, URLs limpias
+[x] SEO: meta tags por producto, sitemap, datos estructurados (las URLs limpias siguen pendientes: hoy son ?producto=slug)
 [ ] Analítica (GA4 / Meta Pixel) con aviso de cookies
 [ ] Newsletter con campañas (hoy solo se guardan suscriptores)
 [ ] Integración con redes sociales / Instagram shop
 
 Operación y calidad
 [ ] Roles de administración con permisos y registro de auditoría
-[ ] Reportes de ventas y stock bajo
+[x] Reportes de ventas y stock bajo
 [ ] Importación/exportación de catálogo (CSV)
 [ ] Multi-idioma y multi-moneda de cobro
 [ ] Tests automatizados (hoy solo lint y build)

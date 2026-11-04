@@ -22,7 +22,7 @@ import unfocusLogo from './assets/logo-full-color.png'
 import unfocusLogoWhite from './assets/logo-blanco.png'
 import PriceTag from './PriceTag'
 import { categories, getSalePrice, formatPrice, getDefaultSize, getProductImage, getProductFacets, getStockForSize, giftCardAmounts, giftCardMaximum, giftCardMinimum, isValidGiftCardAmount, initialProducts, normalizeProductFacets, garmentCuts, productAudiences, productGenders, sizes, type CategoryFilter, type DisplayCurrency, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
-import { apiRequest, type AccountNotification, type AccountSummary, type AccountUser, type ProductReview, type StoreConfig } from './api'
+import { apiRequest, type AccountNotification, type AccountSummary, type AccountUser, type ProductReview, type ShippingRate, type StoreConfig } from './api'
 import { calculateShipping } from './shipping'
 import AccountPanel from './AccountPanel'
 import ProductAdmin from './ProductAdmin'
@@ -70,6 +70,70 @@ const garmentMeasurements: Record<string, { chest: number; length: number }> = {
   '3XL': { chest: 66, length: 79 },
 }
 
+const productsPerPage = 12
+
+const addBusinessDays = (days: number) => {
+  const date = new Date()
+  let remaining = days
+  while (remaining > 0) {
+    date.setDate(date.getDate() + 1)
+    if (date.getDay() !== 0 && date.getDay() !== 6) remaining -= 1
+  }
+  return date
+}
+
+const formatDeliveryDate = (date: Date) => date.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })
+
+function ShippingCalculator({ productId, size, priceArs, shipping, currency, usdArsRate }: { productId: number; size: string; priceArs: number; shipping: StoreConfig['shipping'] | null; currency: DisplayCurrency; usdArsRate: number | null }) {
+  const [postalCode, setPostalCode] = useState(() => window.localStorage.getItem('unfocus-postal-code') ?? '')
+  const [state, setState] = useState<{ status: 'idle' | 'loading' | 'done' | 'error'; rates: ShippingRate[]; available: boolean; message: string }>({ status: 'idle', rates: [], available: true, message: '' })
+  const fallbackShipping = calculateShipping(priceArs, 'delivery', shipping)
+
+  const calculate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const destination = postalCode.trim().toUpperCase()
+    if (!/^[A-Z0-9 -]{4,10}$/.test(destination)) {
+      setState({ status: 'error', rates: [], available: true, message: 'Ingresa un código postal válido.' })
+      return
+    }
+    window.localStorage.setItem('unfocus-postal-code', destination)
+    setState({ status: 'loading', rates: [], available: true, message: '' })
+    try {
+      const result = await apiRequest<{ available: boolean; rates: ShippingRate[] }>('/api/shipping/quote', { method: 'POST', body: JSON.stringify({ items: [{ productId, size, quantity: 1 }], postalCode: destination }) })
+      setState({ status: 'done', rates: result.rates, available: result.available, message: '' })
+    } catch (error) {
+      setState({ status: 'error', rates: [], available: true, message: error instanceof Error ? error.message : 'No pudimos calcular el envío.' })
+    }
+  }
+
+  return (
+    <div className="shipping-calculator">
+      <form onSubmit={calculate}>
+        <label htmlFor="shipping-calculator-postal">Calcular envío</label>
+        <div>
+          <input id="shipping-calculator-postal" inputMode="text" maxLength={10} placeholder="Ej. C1000" value={postalCode} onChange={(event) => setPostalCode(event.target.value.toUpperCase())} autoComplete="postal-code" />
+          <button type="submit" disabled={state.status === 'loading'}>{state.status === 'loading' ? 'Calculando…' : 'Calcular'}</button>
+        </div>
+      </form>
+      <div aria-live="polite">
+        {state.status === 'error' && <p className="shipping-calculator__error">{state.message}</p>}
+        {state.status === 'done' && !state.available && <p>{shipping ? `Estimación para ${postalCode}: ${fallbackShipping > 0 ? formatPrice(fallbackShipping, currency, usdArsRate) : 'sin cargo'}. ` : 'El costo de envío todavía no está configurado. '}La cotización exacta requiere las credenciales de Correo Argentino y se confirma al finalizar la compra.</p>}
+        {state.status === 'done' && state.rates.map((rate) => {
+          const min = Number.parseInt(rate.deliveryTimeMin ?? '', 10)
+          const max = Number.parseInt(rate.deliveryTimeMax ?? '', 10)
+          const hasEstimate = Number.isFinite(max)
+          return (
+            <p key={`${rate.deliveredType}-${rate.productType}`}>
+              <strong>{rate.productName}: {rate.priceArs.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 })}</strong>
+              {hasEstimate && <span> · Llega entre el {formatDeliveryDate(addBusinessDays(Number.isFinite(min) ? min : max))} y el {formatDeliveryDate(addBusinessDays(max))}</span>}
+            </p>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, selectedView, currentUser, shipping, currency, usdArsRate, onBack, onSelectRelated, onSizeChange, onViewChange, onAddToCart, onRequestLogin, onOpenContact }: ProductDetailProps) {
   const [isGalleryHovering, setIsGalleryHovering] = useState(false)
   const [reviewResult, setReviewResult] = useState<{ slug: string; reviews: ProductReview[] } | null>(null)
@@ -81,9 +145,6 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
   const [restockEntry, setRestockEntry] = useState({ key: '', email: '' })
   const [restockResult, setRestockResult] = useState<{ key: string; message: string } | null>(null)
   const [isSubmittingRestock, setIsSubmittingRestock] = useState(false)
-  const [postalCode, setPostalCode] = useState('')
-  const [shippingEstimate, setShippingEstimate] = useState<number | null>(null)
-  const [shippingEstimateError, setShippingEstimateError] = useState('')
 
   const baseViews = product.gallery && product.gallery.length > 0 ? [...product.gallery] : [{ src: getProductImage(product), alt: product.alt, label: 'Vista principal' }]
   const views = [...baseViews]
@@ -122,22 +183,6 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
     } finally {
       setIsSubmittingRestock(false)
     }
-  }
-
-  const estimateShipping = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!/^[A-Za-z0-9 -]{4,10}$/.test(postalCode.trim())) {
-      setShippingEstimateError('Ingresa un código postal válido.')
-      setShippingEstimate(null)
-      return
-    }
-    if (!shipping) {
-      setShippingEstimateError('El costo de envío todavía no está configurado.')
-      setShippingEstimate(null)
-      return
-    }
-    setShippingEstimateError('')
-    setShippingEstimate(calculateShipping(getSalePrice(product), 'delivery', shipping))
   }
 
   useEffect(() => {
@@ -271,16 +316,7 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
               {restockMessage && <p className="restock-alert__message" role="status">{restockMessage}</p>}
             </form>
           )}
-          {!product.isGiftCard && (
-            <form className="shipping-estimator" onSubmit={estimateShipping}>
-              <h2>Calcula el envío</h2>
-              <label><span>Código postal</span><input required inputMode="text" autoComplete="postal-code" minLength={4} maxLength={10} value={postalCode} onChange={(event) => setPostalCode(event.target.value.toUpperCase())} placeholder="Ej. C1000" /></label>
-              <button className="button button--dark" type="submit">Calcular</button>
-              {shippingEstimateError && <p className="shipping-estimator__message" role="alert">{shippingEstimateError}</p>}
-              {shippingEstimate !== null && <p className="shipping-estimator__message" role="status">Estimación para {postalCode}: {shippingEstimate > 0 ? formatPrice(shippingEstimate, currency, usdArsRate) : 'sin cargo'}. Se aplica la tarifa actual de la tienda; la cotización en tiempo real de Correo Argentino estará disponible al configurar sus credenciales de API.</p>}
-              {shippingEstimate === null && <p className="shipping-estimator__hint">La tarifa final se confirma en el checkout. La cotización en tiempo real del transportista requiere credenciales de API.</p>}
-            </form>
-          )}
+          {!product.isGiftCard && <ShippingCalculator productId={product.id} size={selectedSize} priceArs={getSalePrice(product)} shipping={shipping} currency={currency} usdArsRate={usdArsRate} />}
           <button className="button button--coral product-detail__add" type="button" onClick={onAddToCart} disabled={getStockForSize(product, selectedSize) <= 0 || (product.isGiftCard === true && !isValidGiftCardAmount(selectedSize))}>Añadir a la bolsa <ShoppingBag size={17} aria-hidden="true" /></button>
           <p className="product-detail__note">¿Necesitas ayuda para elegir? <button type="button" onClick={onOpenContact}>Escríbenos</button></p>
         </div>
@@ -513,6 +549,8 @@ function App() {
   const [genderFilter, setGenderFilter] = useState<ProductGender | 'Todos'>('Todos')
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(false)
+  const [pagination, setPagination] = useState({ key: '', count: productsPerPage })
   const [sortOrder, setSortOrder] = useState('featured')
   const [selectedSizes, setSelectedSizes] = useState<Record<number, string>>({})
   const [selectedProductViews, setSelectedProductViews] = useState<Record<number, number>>({})
@@ -659,6 +697,11 @@ function App() {
     const product = products.find((item) => item.slug === selectedProductSlug)
     document.title = isAdminPage ? 'Panel de control | UnFocus' : isAccountPage ? 'Mi cuenta | UnFocus' : isContactPage ? 'Contacto | UnFocus' : legalPage ? `${legalPageTitles[legalPage]} | UnFocus` : product ? `${product.name} | UnFocus` : 'UnFocus Mall — Seeking clarity. Embrace yourself.'
   }, [isAccountPage, isAdminPage, isContactPage, legalPage, products, selectedProductSlug])
+
+  // El contador se reinicia solo cuando cambian filtros, búsqueda u orden.
+  const filterKey = [activeCategory, cutFilter, audienceFilter, genderFilter, searchQuery, sortOrder].join('|')
+  const visibleCount = pagination.key === filterKey ? pagination.count : productsPerPage
+  const setVisibleCount = (update: (count: number) => number) => setPagination({ key: filterKey, count: update(visibleCount) })
 
   const visibleProducts = products
     .filter((product) => {
@@ -981,25 +1024,29 @@ function App() {
                 type="search"
                 placeholder="Buscar prendas"
                 value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
+                onChange={(event) => { setSearchQuery(event.target.value); setIsSuggestionsOpen(true) }}
+                onFocus={() => setIsSuggestionsOpen(true)}
+                onBlur={() => window.setTimeout(() => setIsSuggestionsOpen(false), 150)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && searchSuggestions[0]) {
                     event.preventDefault()
                     navigateToProduct(searchSuggestions[0])
                     setSearchQuery('')
+                    setIsSuggestionsOpen(false)
                     setIsSearchOpen(false)
                   } else if (event.key === 'Escape') {
                     setSearchQuery('')
+                    setIsSuggestionsOpen(false)
                   }
                 }}
                 aria-label="Buscar prendas"
                 aria-autocomplete="list"
                 aria-controls="global-search-suggestions"
-                aria-expanded={Boolean(searchQuery.trim())}
+                aria-expanded={Boolean(isSuggestionsOpen && searchQuery.trim())}
               />
-              {searchQuery.trim() && <div className="search-suggestions" id="global-search-suggestions" role="listbox" aria-label="Sugerencias de productos">
+              {isSuggestionsOpen && searchQuery.trim() && <div className="search-suggestions" id="global-search-suggestions" role="listbox" aria-label="Sugerencias de productos">
                 {searchSuggestions.length ? searchSuggestions.map((product) => (
-                  <button className="search-suggestion" key={product.id} type="button" role="option" aria-selected="false" onClick={() => { navigateToProduct(product); setSearchQuery(''); setIsSearchOpen(false) }}>
+                  <button className="search-suggestion" key={product.id} type="button" role="option" aria-selected="false" onMouseDown={(event) => event.preventDefault()} onClick={() => { navigateToProduct(product); setSearchQuery(''); setIsSuggestionsOpen(false); setIsSearchOpen(false) }}>
                     <img src={getProductImage(product)} alt="" />
                     <span><strong>{product.name}</strong><small>{product.category}</small></span>
                     <span className="search-suggestion__price">{formatPrice(getSalePrice(product), displayCurrency, usdArsRate)}</span>
@@ -1127,12 +1174,13 @@ function App() {
           </div>
           {visibleProducts.length > 0 ? (
             <div className="product-grid">
-              {visibleProducts.map((product, index) => <ProductCard key={product.id} product={product} index={index} isFavorite={favorites.includes(product.id)} selectedSize={selectedSizes[product.id] ?? getDefaultSize(product)} currency={displayCurrency} usdArsRate={usdArsRate} onOpenProduct={navigateToProduct} onToggleFavorite={toggleFavorite} onAddToCart={addToCart} onSizeChange={(size) => setSelectedSizes((current) => ({ ...current, [product.id]: size }))} />)}
+              {visibleProducts.slice(0, visibleCount).map((product, index) => <ProductCard key={product.id} product={product} index={index} isFavorite={favorites.includes(product.id)} selectedSize={selectedSizes[product.id] ?? getDefaultSize(product)} currency={displayCurrency} usdArsRate={usdArsRate} onOpenProduct={navigateToProduct} onToggleFavorite={toggleFavorite} onAddToCart={addToCart} onSizeChange={(size) => setSelectedSizes((current) => ({ ...current, [product.id]: size }))} />)}
             </div>
           ) : (
             <div className="empty-results"><Search size={23} strokeWidth={1.5} aria-hidden="true" /><p>No encontramos prendas con esos filtros.</p><button type="button" onClick={() => { setSearchQuery(''); setActiveCategory('Todo'); setCutFilter('Todas'); setAudienceFilter('Todos'); setGenderFilter('Todos') }}>Ver todas las prendas</button></div>
           )}
-          <div className="collection-footnote"><span>{visibleProducts.length} prendas</span><span>Comodidad descrita con claridad</span></div>
+          {visibleProducts.length > visibleCount && <div className="load-more"><button className="button" type="button" onClick={() => setVisibleCount((count) => count + productsPerPage)}>Ver más prendas ({visibleProducts.length - visibleCount} restantes)</button></div>}
+          <div className="collection-footnote"><span>{Math.min(visibleCount, visibleProducts.length)} de {visibleProducts.length} prendas</span><span>Comodidad descrita con claridad</span></div>
         </section>
 
         <section className="story-section" id="historia">
