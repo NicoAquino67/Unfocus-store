@@ -556,7 +556,7 @@ const applyRateLimit = (request, response, next, maxRequests = 20, windowMs = 60
 
 app.disable('x-powered-by')
 app.set('trust proxy', isProduction ? 1 : false)
-app.use(express.json({ limit: '6mb' }))
+app.use(express.json({ limit: '6mb', inflate: false }))
 app.use((request, response, next) => {
   const origin = request.get('origin')
   const isAllowedOrigin = !origin || allowedOrigins.has(origin) || (isProduction ? origin.endsWith('.unfocus.shop') : ['localhost', '127.0.0.1'].includes(new URL(origin || 'http://localhost').hostname))
