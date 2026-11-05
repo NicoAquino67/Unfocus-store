@@ -1,7 +1,9 @@
 .storefront { overflow: hidden; }
-.announcement-bar { min-height: 34px; padding: 0 5.5%; display: flex; align-items: center; justify-content: space-between; background: var(--brand-blue-deep); color: white; font-size: 10px; font-weight: 600; }
-.announcement-bar__right { display: inline-flex; align-items: center; gap: 8px; }
-.announcement-bar__right span { color: var(--coral); font-size: 15px; }
+.announcement-bar { min-height: 34px; padding: 4px 5.5%; display: flex; align-items: center; justify-content: center; background: var(--brand-blue-deep); color: white; font-size: 10px; font-weight: 600; }
+.announcement-bar__offer { display: inline-flex; align-items: center; justify-content: center; gap: 9px; max-width: 100%; color: #fff; font-size: 10px; text-decoration: none; }
+.announcement-bar__offer strong { overflow: hidden; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; text-overflow: ellipsis; white-space: nowrap; }
+.announcement-bar__offer:hover strong { text-decoration-thickness: 2px; }
+.announcement-bar__label { color: #dce5ff; font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .site-header { position: relative; z-index: 5; background: #fff; }
 .header-inner { width: min(1320px, calc(100% - 11%)); min-height: 78px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; gap: 24px; }
 .brand { display: inline-flex; align-items: center; width: fit-content; color: var(--ink); text-decoration: none; }
@@ -369,8 +371,10 @@
 }
 
 @media (max-width: 650px) {
-  .announcement-bar { justify-content: center; padding-inline: 12px; font-size: 9px; }
-  .announcement-bar__right { display: none; }
+  .announcement-bar { padding-inline: 12px; }
+  .announcement-bar__offer { gap: 6px; font-size: 9px; }
+  .announcement-bar__offer strong { max-width: 68vw; }
+  .announcement-bar__label { font-size: 8px; }
   .header-inner { min-height: 66px; grid-template-columns: 1fr auto; gap: 10px; }
   .brand__logo { width: 122px; }
   .brand__name { font-size: 19px; }

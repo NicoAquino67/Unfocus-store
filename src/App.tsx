@@ -21,7 +21,7 @@ import {
 } from 'lucide-react'
 import unfocusLogo from './assets/logo-full-color.png'
 import PriceTag from './PriceTag'
-import { categories, getSalePrice, formatPrice, getDefaultSize, getProductImage, getProductFacets, getStockForSize, giftCardAmounts, giftCardMaximum, giftCardMinimum, isValidGiftCardAmount, initialProducts, normalizeProductFacets, garmentCuts, productAudiences, productGenders, sizes, type CategoryFilter, type DisplayCurrency, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
+import { categories, getSalePrice, hasDiscount, formatPrice, getDefaultSize, getProductImage, getProductFacets, getStockForSize, giftCardAmounts, giftCardMaximum, giftCardMinimum, isValidGiftCardAmount, initialProducts, normalizeProductFacets, garmentCuts, productAudiences, productGenders, sizes, type CategoryFilter, type DisplayCurrency, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
 import { apiRequest, type AccountNotification, type AccountSummary, type AccountUser, type ProductReview, type ShippingRate, type StoreConfig } from './api'
 import { calculateShipping } from './shipping'
 const AccountPanel = lazy(() => import('./AccountPanel'))
@@ -758,6 +758,7 @@ function App() {
   const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0)
   const cartTotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0)
   const activeProduct = products.find((product) => product.slug === selectedProductSlug)
+  const activeOffer = products.find(hasDiscount)
   const activeSlug = activeProduct?.slug
 
   // Vistos recientemente (sin el producto actual); si no hay historial, productos al azar (también sin el actual).
@@ -1020,10 +1021,11 @@ function App() {
   return (
     <div className="storefront">
       <a className="skip-link" href="#inicio">Saltar al contenido principal</a>
-      <div className="announcement-bar">
-        <span>Ropa cómoda. Información clara. Elige a tu ritmo.</span>
-        <span className="announcement-bar__right">Precios en pesos argentinos · USD disponible</span>
-      </div>
+      {activeOffer && <div className="announcement-bar">
+        <a className="announcement-bar__offer" href={`/?producto=${encodeURIComponent(activeOffer.slug)}`} onClick={(event) => { event.preventDefault(); navigateToProduct(activeOffer) }}>
+          <span className="announcement-bar__label">Oferta activa</span><strong>{activeOffer.name}</strong><ArrowRight size={14} aria-hidden="true" />
+        </a>
+      </div>}
 
       <header className="site-header">
         <div className="header-inner">
