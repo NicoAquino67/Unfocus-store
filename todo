@@ -100,12 +100,11 @@ Emails transaccionales
 [x] Configurar SMTP real (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, CONTACT_FROM_EMAIL) y probar el envío
 [x] Email de pedido creado / bienvenida
 [ ] email de confirmacion de compra (envio de codigo si existe)
-[ ]crear mail contacto@unfocus.shop
 
 Legales (Argentina)
 [x] Términos y condiciones, privacidad, cambios y devoluciones, botón de arrepentimiento
 [x] Datos de la tienda (razón social, CUIT, domicilio) en el pie, editables desde el admin
-[ ] Cargar los datos reales de la tienda en el panel admin
+[x] Cargar los datos reales de la tienda en el panel admin
 [ ] Revisión de los textos legales por un abogado
 [x] Defensa del consumidor / botón de baja según corresponda
 
@@ -159,6 +158,7 @@ Marketing y SEO
 [ ] Analítica (GA4 / Meta Pixel) con aviso de cookies
 [ ] Newsletter con campañas (hoy solo se guardan suscriptores)
 [ ] Integración con redes sociales / Instagram shop
+[ ] crear mail contacto@unfocus.shop
 
 Operación y calidad
 [ ] Roles de administración con permisos y registro de auditoría
