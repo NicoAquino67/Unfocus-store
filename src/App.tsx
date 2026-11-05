@@ -153,7 +153,7 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
   const colorViews = selectedColor?.imageIndexes.map((index) => baseViews[index]).filter((view) => view !== undefined) ?? []
   const views = [...(colorViews.length ? colorViews : baseViews)]
 
-  while (views.length < 3) {
+  while (!selectedColor && views.length < 3) {
     const source = baseViews[views.length % baseViews.length]
     views.push({
       src: source.src,
