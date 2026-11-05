@@ -1067,7 +1067,16 @@ function App() {
               </div>}
               <button className="search-toggle" type="button" onClick={() => setIsSearchOpen((open) => !open)} aria-label={isSearchOpen ? 'Cerrar búsqueda' : 'Abrir búsqueda'} aria-expanded={isSearchOpen}><Search size={19} strokeWidth={1.8} aria-hidden="true" /></button>
             </div>
-            <label className="currency-selector" title={exchangeSource ? `Cotización: ${exchangeSource}` : 'Tipo de cambio USD no disponible'}><select value={displayCurrency} onChange={(event) => toggleDisplayCurrency(event.target.value)} aria-label="Moneda de visualización"><option value="ARS">ARS $</option><option value="USD" disabled={!usdArsRate}>USD $</option></select></label>
+            <details className="filter-menu currency-menu" title={exchangeSource ? `Cotización: ${exchangeSource}` : 'Tipo de cambio USD no disponible'}>
+              <summary className="filter-menu__trigger" aria-label="Moneda de visualización">
+                <span>{displayCurrency === 'ARS' ? 'ARS $' : 'USD $'}</span><ChevronDown className="filter-menu__chevron" size={14} aria-hidden="true" />
+              </summary>
+              <div className="filter-menu__panel currency-menu__panel" aria-label="Seleccionar moneda">
+                <div className="filter-menu__heading">Moneda</div>
+                <button className={`menu-option${displayCurrency === 'ARS' ? ' is-active' : ''}`} type="button" aria-pressed={displayCurrency === 'ARS'} onClick={(event) => { toggleDisplayCurrency('ARS'); event.currentTarget.closest('details')?.removeAttribute('open') }}>ARS $</button>
+                <button className={`menu-option${displayCurrency === 'USD' ? ' is-active' : ''}`} type="button" aria-pressed={displayCurrency === 'USD'} disabled={!usdArsRate} onClick={(event) => { toggleDisplayCurrency('USD'); event.currentTarget.closest('details')?.removeAttribute('open') }}>USD $</button>
+              </div>
+            </details>
             <button className="account-trigger" type="button" onClick={navigateToAccount} aria-label={currentUser ? 'Mi cuenta' : 'Iniciar sesión o crear cuenta'} title="Mi cuenta"><UserRound size={19} aria-hidden="true" /></button>
             {currentUser && <div className="notification-center" ref={notificationMenuRef}>
               <button className="notification-center__trigger" type="button" onClick={() => setIsNotificationMenuOpen((open) => !open)} aria-label={`Notificaciones, ${notifications.length} avisos`} aria-expanded={isNotificationMenuOpen} aria-controls="notification-menu">
@@ -1152,7 +1161,19 @@ function App() {
               {categories.map((category) => <button className={`category-tab${activeCategory === category ? ' is-active' : ''}`} key={category} type="button" onClick={() => setActiveCategory(category)} aria-pressed={activeCategory === category}>{category}</button>)}
             </div>
             <div className="collection-toolbar__controls">
-              <label className="sort-control"><span>Ordenar</span><select value={sortOrder} onChange={(event) => setSortOrder(event.target.value)} aria-label="Ordenar productos"><option value="featured">Destacados</option><option value="newest">Novedades</option><option value="popular">Más vendidos</option><option value="price-asc">Precio: menor a mayor</option><option value="price-desc">Precio: mayor a menor</option></select></label>
+              <details className="filter-menu sort-menu">
+                <summary className="filter-menu__trigger"><span>Ordenar</span><strong>{sortOrder === 'featured' ? 'Destacados' : sortOrder === 'newest' ? 'Novedades' : sortOrder === 'popular' ? 'Más vendidos' : sortOrder === 'price-asc' ? 'Precio: menor a mayor' : 'Precio: mayor a menor'}</strong><ChevronDown className="filter-menu__chevron" size={14} aria-hidden="true" /></summary>
+                <div className="filter-menu__panel sort-menu__panel" aria-label="Orden de productos">
+                  <div className="filter-menu__heading">Ordenar productos</div>
+                  {[
+                    ['featured', 'Destacados'],
+                    ['newest', 'Novedades'],
+                    ['popular', 'Más vendidos'],
+                    ['price-asc', 'Precio: menor a mayor'],
+                    ['price-desc', 'Precio: mayor a menor'],
+                  ].map(([value, label]) => <button className={`menu-option${sortOrder === value ? ' is-active' : ''}`} key={value} type="button" aria-pressed={sortOrder === value} onClick={(event) => { setSortOrder(value); event.currentTarget.closest('details')?.removeAttribute('open') }}>{label}</button>)}
+                </div>
+              </details>
               <details className="filter-menu">
                 <summary className="filter-menu__trigger"><ListFilter size={14} aria-hidden="true" /><span>Filtrar</span>{activeFilterCount > 0 && <span className="filter-menu__count">{activeFilterCount}</span>}<ChevronDown className="filter-menu__chevron" size={14} aria-hidden="true" /></summary>
                 <div className="filter-menu__panel" aria-label="Filtros de productos">
