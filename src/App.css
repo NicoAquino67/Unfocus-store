@@ -34,8 +34,8 @@
 .bag-trigger { display: inline-flex; align-items: center; gap: 8px; padding: 7px 0 7px 5px; border: 0; background: none; color: var(--ink); font: 600 12px var(--sans); cursor: pointer; }
 .bag-count { display: grid; place-items: center; width: 19px; height: 19px; border-radius: 50%; background: var(--ink); color: white; font-size: 10px; }
 .currency-selector { display: inline-flex; align-items: center; }
-.currency-selector select { min-height: 32px; padding: 0 4px; border: 0; border-bottom: 1px solid var(--line); outline: 0; background: transparent; color: var(--brand-blue-deep); font: 600 10px var(--sans); cursor: pointer; }
-.account-trigger { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); background: transparent; color: var(--brand-blue-deep); cursor: pointer; }
+.currency-selector select { min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; outline: 0; background: transparent; color: var(--brand-blue-deep); font: 600 10px var(--sans); cursor: pointer; }
+.account-trigger { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 50%; background: transparent; color: var(--brand-blue-deep); cursor: pointer; }
 .account-trigger:hover { border-color: var(--brand-blue); background: #f1f8fb; }
 .notification-center { position: relative; z-index: 7; flex: 0 0 auto; }
 .notification-center__trigger { position: relative; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: #fff; color: var(--brand-blue-deep); cursor: pointer; }
@@ -467,6 +467,6 @@
 .shipping-calculator label { display: block; margin-bottom: 8px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
 .shipping-calculator form > div { display: flex; gap: 8px; }
 .shipping-calculator input { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); background: transparent; color: var(--ink); font: inherit; }
-.shipping-calculator button { padding: 10px 16px; border: 1px solid var(--ink); background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
+.shipping-calculator button { padding: 10px 16px; border: 1px solid var(--ink); border-radius: 999px; background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
 .shipping-calculator p { margin: 10px 0 0; line-height: 1.5; }
 .shipping-calculator__error { color: #9b2c2c; }
