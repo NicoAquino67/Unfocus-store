@@ -76,8 +76,8 @@ ARS es la moneda base de catálogo, administración y pedidos. Si `USD_ARS_RATE`
 
 ## Persistencia y despliegue
 
-- SQLite: `data/unfocus.sqlite` (se puede cambiar con `DATABASE_PATH`).
-- Imágenes subidas desde el panel: `uploads/` (se puede cambiar con `UPLOAD_DIR`). Las imágenes semilla están en `ident/` (fuera de Git, se puede cambiar con `IDENT_DIR`).
+- SQLite: `data/unfocus.sqlite` en desarrollo; en producción, los paths relativos de `DATABASE_PATH` se guardan bajo `$HOME/unfocus-data/`, fuera de los directorios reemplazados en cada despliegue. Los paths absolutos configurados se respetan.
+- Imágenes subidas desde el panel: `uploads/` en desarrollo; en producción, los paths relativos de `UPLOAD_DIR` se guardan bajo `$HOME/unfocus-data/`. Las imágenes semilla están en `ident/` (fuera de Git, se puede cambiar con `IDENT_DIR`).
 - `.env`, la base de datos y las imágenes subidas están excluidos de Git.
 - Para producción, configura `NODE_ENV=production`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, almacenamiento persistente y HTTPS; ejecuta `npm run build` y luego `npm start`.
 
@@ -101,7 +101,7 @@ Cuando `MP_ACCESS_TOKEN` existe, el checkout crea una preferencia de pago (con e
 1. Crear el subdominio (ej. `dev.unfocus.shop`) y una Node.js Web App conectada al repositorio de GitHub; elegir Node 22 o superior (`node:sqlite`).
 2. Build command: `npm install && npm run build`. Start command: `npm start`.
 3. Variables en el panel: `NODE_ENV=production`, `PUBLIC_BASE_URL=https://dev.unfocus.shop`, `MP_WEBHOOK_URL=https://dev.unfocus.shop/api/payments/webhook`, `MP_WEBHOOK_SECRET`, `MP_ACCESS_TOKEN` (credenciales de prueba), `ADMIN_EMAIL`, `ADMIN_PASSWORD`, SMTP y datos de la tienda.
-4. Para que los datos sobrevivan a los despliegues, crear una carpeta fuera de la app (ej. `/home/USUARIO/unfocus-data`) y definir `DATABASE_PATH`, `UPLOAD_DIR` e `IDENT_DIR` apuntando a ella; copiar allí las imágenes de `ident/` por el Administrador de archivos.
+4. En producción, SQLite y las imágenes subidas se guardan automáticamente en `$HOME/unfocus-data/`, fuera de la versión desplegada. También se puede definir `DATABASE_PATH` y `UPLOAD_DIR` con paths absolutos a almacenamiento persistente. No crees una base MySQL para esta versión: el servidor usa SQLite (`node:sqlite`).
 
 ### Paquete Docker
 

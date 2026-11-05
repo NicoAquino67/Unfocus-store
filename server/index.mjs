@@ -21,8 +21,15 @@ const mercadoPagoClient = mercadoPagoAccessToken ? new MercadoPagoConfig({ acces
 const mercadoPagoEnvironment = process.env.MP_ENVIRONMENT?.trim().toLowerCase() || (isProduction ? 'production' : 'unconfigured')
 const mercadoPagoIsTestMode = mercadoPagoEnvironment === 'test'
 const publicBaseUrl = process.env.PUBLIC_BASE_URL || (isProduction ? 'https://localhost' : 'http://localhost:5173')
-const databasePath = process.env.DATABASE_PATH || path.join(projectDirectory, 'data', 'unfocus.sqlite')
-const uploadDirectory = process.env.UPLOAD_DIR ? path.resolve(process.env.UPLOAD_DIR) : path.join(projectDirectory, 'uploads')
+const persistentDataDirectory = isProduction && process.env.HOME ? path.join(process.env.HOME, 'unfocus-data') : projectDirectory
+const resolveStoragePath = (configuredPath, defaultPath) => {
+  const storagePath = configuredPath || defaultPath
+  if (path.isAbsolute(storagePath)) return storagePath
+  if (isProduction && !process.env.HOME) throw new Error('HOME es obligatorio en producción para guardar los datos fuera del directorio de despliegue.')
+  return path.resolve(persistentDataDirectory, storagePath)
+}
+const databasePath = resolveStoragePath(process.env.DATABASE_PATH, path.join('data', 'unfocus.sqlite'))
+const uploadDirectory = resolveStoragePath(process.env.UPLOAD_DIR, 'uploads')
 const identDirectory = process.env.IDENT_DIR ? path.resolve(process.env.IDENT_DIR) : path.join(projectDirectory, 'ident')
 const sessionCookieName = 'unfocus_session'
 const sessionLifetimeMs = 1000 * 60 * 60 * 24 * 14
