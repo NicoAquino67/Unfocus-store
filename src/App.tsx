@@ -383,6 +383,67 @@ type ContactPageProps = {
   onBack: () => void
 }
 
+function AboutPage({ onBack, onOpenDiary, onOpenShop }: { onBack: () => void; onOpenDiary: () => void; onOpenShop: () => void }) {
+  return (
+    <article className="brand-page about-page" aria-labelledby="about-title">
+      <button className="contact-page__back" type="button" onClick={onBack}>← Volver a la tienda</button>
+      <header className="brand-page__hero">
+        <p className="eyebrow">Nuestra mirada · Sobre UnFocus</p>
+        <h1 id="about-title">No todos sentimos el mundo de la misma manera.<br /><em>Y eso está bien.</em></h1>
+        <p>Creemos que la ropa debería adaptarse a las personas, no las personas a la ropa.</p>
+      </header>
+      <div className="about-page__story">
+        <p>Nacimos con una idea: crear un espacio donde la comodidad, la identidad y la libertad de expresión tengan el protagonismo que merecen. Vestirse no debería ser una obligación de encajar, sino una oportunidad para expresarte a tu manera.</p>
+        <p>Cada persona experimenta el mundo de forma diferente. Las texturas, los materiales, los ajustes y las sensaciones de una prenda pueden cambiar por completo la experiencia de llevarla puesta.</p>
+        <p>Por eso ofrecemos más que diseños originales: queremos que puedas elegir con tranquilidad, conocer los materiales y encontrar aquello con lo que realmente te identificás.</p>
+        <p>Creemos en la individualidad, en dejar de lado las reglas que dictan cómo deberíamos vestirnos o expresarnos. No buscamos que todos encajen en una misma idea: celebramos que cada persona tiene su propia forma de ser.</p>
+        <p className="about-page__closing">UnFocus no se trata de encajar. Se trata de sentirte cómodo siendo vos mismo.<br /><strong>Bienvenido a UnFocus.</strong></p>
+      </div>
+      <section className="about-page__pillars" aria-label="Pilares de UnFocus">
+        <article><span>01</span><h2>Comodidad sin compromisos</h2><p>Materiales, texturas y características explicadas con transparencia. La experiencia de vestir importa tanto como el diseño.</p></article>
+        <article><span>02</span><h2>Identidad sin etiquetas</h2><p>Diseños que permiten expresar personalidad sin tener que responder a expectativas externas.</p></article>
+        <article><span>03</span><h2>Diferentes formas de sentir</h2><p>Una mirada inspirada en la experiencia neurodivergente y abierta a todas las personas.</p></article>
+      </section>
+      <div className="brand-page__actions">
+        <button className="button button--coral" type="button" onClick={onOpenShop}>Explorar prendas <ArrowRight size={17} aria-hidden="true" /></button>
+        <button className="text-link" type="button" onClick={onOpenDiary}>Conoce el Diario <ArrowUpRight size={17} aria-hidden="true" /></button>
+      </div>
+    </article>
+  )
+}
+
+function NewsletterForm({ onSubmit, id = 'newsletter-email' }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void; id?: string }) {
+  return (
+    <form className="newsletter-form" onSubmit={onSubmit}>
+      <label htmlFor={id}>Tu correo electrónico</label>
+      <div className="newsletter-form__input"><input id={id} name="newsletter-email" type="email" placeholder="hola@ejemplo.com" required /><button type="submit" aria-label="Recibir novedades"><ArrowRight size={19} aria-hidden="true" /></button></div>
+      <p>Sin ruido, solo novedades de UnFocus.</p>
+    </form>
+  )
+}
+
+function DiaryPage({ onBack, onSubmit }: { onBack: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+  return (
+    <article className="brand-page diary-page" aria-labelledby="diary-title">
+      <button className="contact-page__back" type="button" onClick={onBack}>← Volver a la tienda</button>
+      <header className="brand-page__hero diary-page__hero">
+        <p className="eyebrow">UnFocus · Diario</p>
+        <h1 id="diary-title">Ideas, historias y formas de <em>sentir.</em></h1>
+        <p>Un espacio para compartir nuestros vlogs, conversaciones y novedades, siempre a tu ritmo.</p>
+      </header>
+      <section className="diary-page__empty" aria-labelledby="diary-empty-title">
+        <span className="diary-page__issue">PRÓXIMAMENTE</span>
+        <h2 id="diary-empty-title">Estamos preparando las primeras historias.</h2>
+        <p>Muy pronto vas a encontrar acá nuestras publicaciones y vlogs. Mientras tanto, puedes suscribirte para enterarte cuando salga algo nuevo.</p>
+      </section>
+      <section className="diary-page__newsletter" id="newsletter" aria-labelledby="diary-newsletter-title">
+        <div><p className="eyebrow">Novedades con calma</p><h2 id="diary-newsletter-title">Un correo cuando haya algo <em>nuevo.</em></h2><p>Te avisamos cuando publiquemos una nueva historia o vlog.</p></div>
+        <NewsletterForm id="diary-newsletter-email" onSubmit={onSubmit} />
+      </section>
+    </article>
+  )
+}
+
 function ContactPage({ onBack }: ContactPageProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [feedback, setFeedback] = useState<{ message: string; isEmailSent?: boolean; isError?: boolean } | null>(null)
@@ -551,6 +612,9 @@ function App() {
   const [isAccountPage, setIsAccountPage] = useState(() => new URLSearchParams(window.location.search).get('cuenta') === '1')
   const [isAdminPage, setIsAdminPage] = useState(() => new URLSearchParams(window.location.search).get('admin') === '1')
   const [isContactPage, setIsContactPage] = useState(() => new URLSearchParams(window.location.search).get('contacto') === '1')
+  const [isAboutPage, setIsAboutPage] = useState(() => new URLSearchParams(window.location.search).get('sobre') === '1')
+  const [isDiaryPage, setIsDiaryPage] = useState(() => new URLSearchParams(window.location.search).get('diario') === '1')
+  const [isShopPage, setIsShopPage] = useState(() => new URLSearchParams(window.location.search).get('tienda') === '1')
   const [legalPage, setLegalPage] = useState<LegalPageKey | null>(readLegalPage)
   const [storeConfig, setStoreConfig] = useState<StoreConfig | null>(null)
   const [recentSlugs, setRecentSlugs] = useState<string[]>(readRecentlyViewed)
@@ -740,6 +804,9 @@ function App() {
       setIsAdminPage(searchParams.get('admin') === '1')
       setIsAccountPage(searchParams.get('cuenta') === '1')
       setIsContactPage(searchParams.get('contacto') === '1')
+      setIsAboutPage(searchParams.get('sobre') === '1')
+      setIsDiaryPage(searchParams.get('diario') === '1')
+      setIsShopPage(searchParams.get('tienda') === '1')
       setLegalPage(readLegalPage())
     }
     window.addEventListener('popstate', syncProductRoute)
@@ -748,8 +815,8 @@ function App() {
 
   useEffect(() => {
     const product = products.find((item) => item.slug === selectedProductSlug)
-    document.title = isAdminPage ? 'Panel de control | UnFocus' : isAccountPage ? 'Mi cuenta | UnFocus' : isContactPage ? 'Contacto | UnFocus' : legalPage ? `${legalPageTitles[legalPage]} | UnFocus` : product ? `${product.name} | UnFocus` : 'UnFocus Mall — Seeking clarity. Embrace yourself.'
-  }, [isAccountPage, isAdminPage, isContactPage, legalPage, products, selectedProductSlug])
+    document.title = isAdminPage ? 'Panel de control | UnFocus' : isAccountPage ? 'Mi cuenta | UnFocus' : isContactPage ? 'Contacto | UnFocus' : isAboutPage ? 'Nuestra mirada | UnFocus' : isDiaryPage ? 'Diario | UnFocus' : isShopPage ? 'Tienda | UnFocus' : legalPage ? `${legalPageTitles[legalPage]} | UnFocus` : product ? `${product.name} | UnFocus` : 'UnFocus Mall — Busca claridad. Abraza tu esencia.'
+  }, [isAboutPage, isAccountPage, isAdminPage, isContactPage, isDiaryPage, isShopPage, legalPage, products, selectedProductSlug])
 
   // El contador se reinicia solo cuando cambian filtros, búsqueda u orden.
   const filterKey = [activeCategory, cutFilter, audienceFilter, genderFilter, searchQuery, sortOrder].join('|')
@@ -839,6 +906,9 @@ function App() {
     nextUrl.searchParams.delete('admin')
     nextUrl.searchParams.delete('cuenta')
     nextUrl.searchParams.delete('contacto')
+    nextUrl.searchParams.delete('sobre')
+    nextUrl.searchParams.delete('diario')
+    nextUrl.searchParams.delete('tienda')
     if (product) nextUrl.searchParams.set('producto', product.slug)
     else nextUrl.searchParams.delete('producto')
     nextUrl.searchParams.delete('legal')
@@ -846,6 +916,9 @@ function App() {
     setIsAdminPage(false)
     setIsAccountPage(false)
     setIsContactPage(false)
+    setIsAboutPage(false)
+    setIsDiaryPage(false)
+    setIsShopPage(false)
     setSelectedProductSlug(product?.slug ?? null)
     rememberProduct(product?.slug ?? null)
     setLegalPage(null)
@@ -861,12 +934,18 @@ function App() {
     nextUrl.searchParams.delete('producto')
     nextUrl.searchParams.delete('cuenta')
     nextUrl.searchParams.delete('contacto')
+    nextUrl.searchParams.delete('sobre')
+    nextUrl.searchParams.delete('diario')
+    nextUrl.searchParams.delete('tienda')
     nextUrl.searchParams.set('admin', '1')
     nextUrl.searchParams.delete('legal')
     window.history.pushState({}, '', nextUrl)
     setSelectedProductSlug(null)
     setIsAccountPage(false)
     setIsContactPage(false)
+    setIsAboutPage(false)
+    setIsDiaryPage(false)
+    setIsShopPage(false)
     setIsAdminPage(true)
     setLegalPage(null)
     window.scrollTo({ top: 0, behavior: 'auto' })
@@ -878,25 +957,34 @@ function App() {
     nextUrl.searchParams.delete('admin')
     nextUrl.searchParams.delete('cuenta')
     nextUrl.searchParams.set('contacto', '1')
+    nextUrl.searchParams.delete('sobre')
+    nextUrl.searchParams.delete('diario')
     nextUrl.searchParams.delete('legal')
+    nextUrl.searchParams.delete('tienda')
     window.history.pushState({}, '', nextUrl)
     setSelectedProductSlug(null)
     setIsAdminPage(false)
     setIsAccountPage(false)
     setIsContactPage(true)
+    setIsAboutPage(false)
+    setIsDiaryPage(false)
+    setIsShopPage(false)
     setLegalPage(null)
     window.scrollTo({ top: 0, behavior: 'auto' })
   }
 
   const navigateToLegal = (page: LegalPageKey) => {
     const nextUrl = new URL(window.location.href)
-    for (const param of ['producto', 'admin', 'cuenta', 'contacto']) nextUrl.searchParams.delete(param)
+    for (const param of ['producto', 'admin', 'cuenta', 'contacto', 'sobre', 'diario', 'tienda']) nextUrl.searchParams.delete(param)
     nextUrl.searchParams.set('legal', page)
     window.history.pushState({}, '', nextUrl)
     setSelectedProductSlug(null)
     setIsAdminPage(false)
     setIsAccountPage(false)
     setIsContactPage(false)
+    setIsAboutPage(false)
+    setIsDiaryPage(false)
+    setIsShopPage(false)
     setLegalPage(page)
     setIsCartOpen(false)
     window.scrollTo({ top: 0, behavior: 'auto' })
@@ -908,12 +996,71 @@ function App() {
     nextUrl.searchParams.delete('admin')
     nextUrl.searchParams.delete('cuenta')
     nextUrl.searchParams.delete('contacto')
+    nextUrl.searchParams.delete('sobre')
+    nextUrl.searchParams.delete('diario')
     nextUrl.searchParams.delete('legal')
+    nextUrl.searchParams.delete('tienda')
     window.history.pushState({}, '', nextUrl)
     setSelectedProductSlug(null)
     setIsAdminPage(false)
     setIsAccountPage(false)
     setIsContactPage(false)
+    setIsAboutPage(false)
+    setIsDiaryPage(false)
+    setIsShopPage(false)
+    setLegalPage(null)
+    window.scrollTo({ top: 0, behavior: 'auto' })
+  }
+
+  const navigateToShop = () => {
+    const nextUrl = new URL(window.location.href)
+    for (const param of ['producto', 'admin', 'cuenta', 'contacto', 'sobre', 'diario', 'legal']) nextUrl.searchParams.delete(param)
+    nextUrl.searchParams.set('tienda', '1')
+    window.history.pushState({}, '', nextUrl)
+    setSelectedProductSlug(null)
+    setIsAdminPage(false)
+    setIsAccountPage(false)
+    setIsContactPage(false)
+    setIsAboutPage(false)
+    setIsDiaryPage(false)
+    setIsShopPage(true)
+    setLegalPage(null)
+    setActiveCategory('Todo')
+    setCutFilter('Todas')
+    setAudienceFilter('Todos')
+    setGenderFilter('Todos')
+    setSearchQuery('')
+    window.scrollTo({ top: 0, behavior: 'auto' })
+  }
+
+  const navigateToAbout = () => {
+    const nextUrl = new URL(window.location.href)
+    for (const param of ['producto', 'admin', 'cuenta', 'contacto', 'diario', 'legal', 'tienda']) nextUrl.searchParams.delete(param)
+    nextUrl.searchParams.set('sobre', '1')
+    window.history.pushState({}, '', nextUrl)
+    setSelectedProductSlug(null)
+    setIsAdminPage(false)
+    setIsAccountPage(false)
+    setIsContactPage(false)
+    setIsAboutPage(true)
+    setIsDiaryPage(false)
+    setIsShopPage(false)
+    setLegalPage(null)
+    window.scrollTo({ top: 0, behavior: 'auto' })
+  }
+
+  const navigateToDiary = () => {
+    const nextUrl = new URL(window.location.href)
+    for (const param of ['producto', 'admin', 'cuenta', 'contacto', 'sobre', 'legal', 'tienda']) nextUrl.searchParams.delete(param)
+    nextUrl.searchParams.set('diario', '1')
+    window.history.pushState({}, '', nextUrl)
+    setSelectedProductSlug(null)
+    setIsAdminPage(false)
+    setIsAccountPage(false)
+    setIsContactPage(false)
+    setIsAboutPage(false)
+    setIsDiaryPage(true)
+    setIsShopPage(false)
     setLegalPage(null)
     window.scrollTo({ top: 0, behavior: 'auto' })
   }
@@ -923,6 +1070,9 @@ function App() {
     nextUrl.searchParams.delete('producto')
     nextUrl.searchParams.delete('admin')
     nextUrl.searchParams.delete('contacto')
+    nextUrl.searchParams.delete('sobre')
+    nextUrl.searchParams.delete('diario')
+    nextUrl.searchParams.delete('tienda')
     nextUrl.searchParams.set('cuenta', '1')
     nextUrl.searchParams.delete('legal')
     window.history.pushState({}, '', nextUrl)
@@ -930,6 +1080,9 @@ function App() {
     setIsAdminPage(false)
     setIsAccountPage(true)
     setIsContactPage(false)
+    setIsAboutPage(false)
+    setIsDiaryPage(false)
+    setIsShopPage(false)
     setLegalPage(null)
     window.scrollTo({ top: 0, behavior: 'auto' })
   }
@@ -1071,7 +1224,7 @@ function App() {
       <header className="site-header">
         <div className="header-inner">
           <a className="brand" href="/" onClick={(event) => { event.preventDefault(); navigateToStore() }} aria-label="UnFocus, inicio"><span className="brand__logo-wrap"><img className="brand__logo" src={unfocusLogo} alt="UnFocus" width="4724" height="1157" /><span className="brand__glint" style={{ maskImage: `url("${unfocusLogo}")`, WebkitMaskImage: `url("${unfocusLogo}")` }} aria-hidden="true" /></span></a>
-          <nav className="main-nav" aria-label="Navegación principal"><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#coleccion' : '#coleccion'}>Tienda</a><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#historia' : '#historia'}>Sobre UnFocus</a><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#newsletter' : '#newsletter'}>Diario</a><a href="?contacto=1" onClick={(event) => { event.preventDefault(); navigateToContact() }}>Contacto</a></nav>
+          <nav className="main-nav" aria-label="Navegación principal"><a href="/?tienda=1" onClick={(event) => { event.preventDefault(); navigateToShop() }}>Tienda</a><a href="/?sobre=1" onClick={(event) => { event.preventDefault(); navigateToAbout() }}>Nuestra mirada</a><a href="/?diario=1" onClick={(event) => { event.preventDefault(); navigateToDiary() }}>Diario</a><a href="?contacto=1" onClick={(event) => { event.preventDefault(); navigateToContact() }}>Contacto</a></nav>
           <div className="header-actions">
             <div className={`search-box${isSearchOpen ? ' is-open' : ''}`}>
               <Search className="search-box__icon" size={17} strokeWidth={1.8} aria-hidden="true" />
@@ -1111,7 +1264,7 @@ function App() {
               <button className="search-toggle" type="button" onClick={() => setIsSearchOpen((open) => !open)} aria-label={isSearchOpen ? 'Cerrar búsqueda' : 'Abrir búsqueda'} aria-expanded={isSearchOpen}><Search size={19} strokeWidth={1.8} aria-hidden="true" /></button>
             </div>
             <details className="filter-menu currency-menu" title={exchangeSource ? `Cotización: ${exchangeSource}` : 'Tipo de cambio USD no disponible'}>
-              <summary className="filter-menu__trigger" aria-label="Moneda de visualización">
+              <summary className="filter-menu__trigger currency-menu__trigger" aria-label="Moneda de visualización">
                 <span>{displayCurrency === 'ARS' ? 'ARS $' : 'USD $'}</span><ChevronDown className="filter-menu__chevron" size={14} aria-hidden="true" />
               </summary>
               <div className="filter-menu__panel currency-menu__panel" aria-label="Seleccionar moneda">
@@ -1149,7 +1302,7 @@ function App() {
         <Suspense fallback={<div className="async-route-loading" role="status">Cargando…</div>}>
         {isAdminPage && currentUser?.isAdmin ? <ProductAdmin products={products} onSave={saveProduct} onDelete={deleteProduct} onClose={navigateToStore} /> : isAccountPage || isAdminPage ? (
           <AccountPanel user={currentUser} authLoading={authLoading} currency={displayCurrency} usdArsRate={usdArsRate} onAuthenticated={handleAuthenticated} onLogout={handleLogout} onOpenProduct={navigateToProduct} onOpenAdmin={navigateToAdmin} onToggleFavorite={toggleFavorite} />
-        ) : legalPage ? <LegalPages page={legalPage} store={storeConfig?.store ?? null} onBack={navigateToStore} onOpenPage={navigateToLegal} onOpenContact={navigateToContact} /> : isContactPage ? <ContactPage onBack={navigateToStore} /> : activeProduct ? (
+        ) : legalPage ? <LegalPages page={legalPage} store={storeConfig?.store ?? null} onBack={navigateToStore} onOpenPage={navigateToLegal} onOpenContact={navigateToContact} /> : isContactPage ? <ContactPage onBack={navigateToStore} /> : isAboutPage ? <AboutPage onBack={navigateToStore} onOpenDiary={navigateToDiary} onOpenShop={navigateToShop} /> : isDiaryPage ? <DiaryPage onBack={navigateToStore} onSubmit={handleNewsletter} /> : activeProduct ? (
           <ProductDetail
             key={activeProduct.id}
             product={activeProduct}
@@ -1171,6 +1324,7 @@ function App() {
           />
         ) : (
           <>
+        {!isShopPage && <>
         <section className="hero" aria-labelledby="hero-title">
           {showcaseProducts[0] && <img className="hero__image" src={getProductImage(showcaseProducts[0], 1)} alt={`Espalda de ${showcaseProducts[0].name}`} width="1600" height="2200" fetchPriority="high" />}
           <div className="hero__veil" />
@@ -1178,9 +1332,9 @@ function App() {
             <p className="eyebrow hero__eyebrow"><span /> Diseñada desde la experiencia neurodivergente</p>
             <h1 id="hero-title">Vístete para<br />sentirte <em>tú.</em></h1>
             <p className="hero__description">Prendas cómodas, información sensorial clara y espacio para elegir lo que te hace bien.</p>
-            <a className="button button--coral" href="#coleccion">Explorar prendas <ArrowRight size={17} aria-hidden="true" /></a>
+            <button className="button button--coral" type="button" onClick={navigateToShop}>Explorar prendas <ArrowRight size={17} aria-hidden="true" /></button>
           </div>
-          <div className="hero__caption"><span>UnFocus Mall</span><span>Seeking Clarity &amp; Embrace Yourself</span></div>
+          <div className="hero__caption"><span>UnFocus Mall</span><span>Busca claridad. Abraza tu esencia.</span></div>
           <div className="hero__stamp" aria-hidden="true"><span>SÉ TÚ</span><span>A TU RITMO</span></div>
         </section>
 
@@ -1193,11 +1347,12 @@ function App() {
           <p>No hay límites para una mente que <em>piensa diferente.</em></p>
           <span className="manifesto-strip__signature">UnFocus · A tu ritmo</span>
         </section>
+        </>}
 
-        <section className="collection-section" id="coleccion" aria-labelledby="collection-title">
+        <section className={`collection-section${isShopPage ? ' collection-section--shop' : ''}`} id="coleccion" aria-labelledby="collection-title">
           <div className="section-intro">
-            <div><p className="eyebrow">Un armario a tu manera</p><h2 id="collection-title">Comodidad, en tus <em>propios términos.</em></h2></div>
-            <p className="section-intro__aside">Cada cuerpo siente distinto.<br />Tu comodidad marca la pauta.</p>
+            <div><p className="eyebrow">{isShopPage ? 'UnFocus · Tienda' : 'Un armario a tu manera'}</p>{isShopPage ? <h1 id="collection-title">Todas las <em>prendas.</em></h1> : <h2 id="collection-title">Comodidad, en tus <em>propios términos.</em></h2>}</div>
+            {!isShopPage && <p className="section-intro__aside">Cada cuerpo siente distinto.<br />Tu comodidad marca la pauta.</p>}
           </div>
           <div className="collection-toolbar">
             <div className="category-tabs" role="group" aria-label="Filtrar por categoría">
@@ -1261,24 +1416,26 @@ function App() {
           <div className="collection-footnote"><span>{Math.min(visibleCount, visibleProducts.length)} de {visibleProducts.length} prendas</span><span>Comodidad descrita con claridad</span></div>
         </section>
 
+        {!isShopPage && <>
         <section className="story-section" id="historia">
           <div className="story-image-wrap">{(showcaseProducts[1] ?? showcaseProducts[0]) && <img src={getProductImage(showcaseProducts[1] ?? showcaseProducts[0], 1)} alt={`Espalda de ${(showcaseProducts[1] ?? showcaseProducts[0]).name}`} width="900" height="1225" loading="lazy" />}<span className="story-image-label">UNFOCUS · A TU RITMO</span></div>
-          <div className="story-copy"><p className="eyebrow">La comodidad también es personal</p><h2>Tu forma de sentir<br />es <em>la medida.</em></h2><p>La textura, las costuras, el ajuste y las etiquetas importan. Por eso describimos cada prenda con claridad: para que puedas decidir cómo se sentirá antes de que llegue a casa. Sin reglas sobre cómo vestirte. Sin prisa.</p><a className="text-link" href="#coleccion">Encuentra tu comodidad <ArrowUpRight size={17} aria-hidden="true" /></a><span className="story-scribble" aria-hidden="true">sé tú, a tu ritmo</span></div>
+          <div className="story-copy"><p className="eyebrow">La comodidad también es personal</p><h2>Tu forma de sentir<br />es <em>la medida.</em></h2><p>La textura, las costuras, el ajuste y las etiquetas importan. Por eso describimos cada prenda con claridad: para que puedas decidir cómo se sentirá antes de que llegue a casa. Sin reglas sobre cómo vestirte. Sin prisa.</p><button className="text-link" type="button" onClick={navigateToAbout}>Conoce nuestra mirada <ArrowUpRight size={17} aria-hidden="true" /></button><span className="story-scribble" aria-hidden="true">sé tú, a tu ritmo</span></div>
         </section>
 
         <section className="newsletter-section" id="newsletter">
           <div className="newsletter-mark" aria-hidden="true"><Brain size={48} strokeWidth={1.5} /></div>
-          <div className="newsletter-copy"><p className="eyebrow">Novedades con calma</p><h2>Un correo cuando<br />haya algo <em>nuevo.</em></h2></div>
-          <form className="newsletter-form" onSubmit={handleNewsletter}><label htmlFor="newsletter-email">Tu correo electrónico</label><div className="newsletter-form__input"><input id="newsletter-email" name="newsletter-email" type="email" placeholder="hola@ejemplo.com" required /><button type="submit" aria-label="Recibir novedades"><ArrowRight size={19} aria-hidden="true" /></button></div><p>Sin ruido, solo novedades de UnFocus.</p></form>
+          <div className="newsletter-copy"><p className="eyebrow">Novedades con calma</p><h2>Un correo cuando<br />haya algo <em>nuevo.</em></h2><button className="text-link newsletter-copy__diary" type="button" onClick={navigateToDiary}>Lee el Diario <ArrowUpRight size={16} aria-hidden="true" /></button></div>
+          <NewsletterForm onSubmit={handleNewsletter} />
         </section>
+        </>}
           </>
         )}
         </Suspense>
       </main>
 
       <footer className="site-footer">
-        <a className="brand brand--footer" href="/" onClick={(event) => { event.preventDefault(); navigateToStore() }} aria-label="UnFocus, inicio"><span className="brand__logo-wrap"><img className="brand__logo" src={unfocusLogo} alt="UnFocus" width="4724" height="1157" /><span className="brand__glint" style={{ maskImage: `url("${unfocusLogo}")`, WebkitMaskImage: `url("${unfocusLogo}")` }} aria-hidden="true" /></span></a><span>Seeking clarity. Embrace yourself.</span>
-        <div className="footer-links"><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#coleccion' : '#coleccion'}>Tienda</a><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#historia' : '#historia'}>Sobre UnFocus</a><a href="?contacto=1" onClick={(event) => { event.preventDefault(); navigateToContact() }}>Contacto</a></div>
+        <a className="brand brand--footer" href="/" onClick={(event) => { event.preventDefault(); navigateToStore() }} aria-label="UnFocus, inicio"><span className="brand__logo-wrap"><img className="brand__logo" src={unfocusLogo} alt="UnFocus" width="4724" height="1157" /><span className="brand__glint" style={{ maskImage: `url("${unfocusLogo}")`, WebkitMaskImage: `url("${unfocusLogo}")` }} aria-hidden="true" /></span></a><span>Busca claridad. Abraza tu esencia.</span>
+        <div className="footer-links"><a href="/?tienda=1" onClick={(event) => { event.preventDefault(); navigateToShop() }}>Tienda</a><a href="/?sobre=1" onClick={(event) => { event.preventDefault(); navigateToAbout() }}>Nuestra mirada</a><a href="/?diario=1" onClick={(event) => { event.preventDefault(); navigateToDiary() }}>Diario</a><a href="?contacto=1" onClick={(event) => { event.preventDefault(); navigateToContact() }}>Contacto</a></div>
         <nav className="footer-legal" aria-label="Información legal">{legalPageKeys.map((key) => <a key={key} href={`?legal=${key}`} onClick={(event) => { event.preventDefault(); navigateToLegal(key) }}>{legalPageTitles[key]}</a>)}</nav>
         {storeConfig?.store.legalName && <p className="footer-store">{storeConfig.store.legalName}{storeConfig.store.taxId ? ` · CUIT ${storeConfig.store.taxId}` : '}{storeConfig.store.address ? ` · ${storeConfig.store.address}` : '}</p>}<span className="footer-copyright">© 2026 UnFocus</span>
       </footer>

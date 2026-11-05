@@ -437,7 +437,7 @@ const sendOrderEmail = async (orderId, kind) => {
   const itemLines = items.map((item) => `- ${item.quantity} × ${item.product_name} (${item.is_gift_card ? 'tarjeta' : `talle ${item.size}`}): ${formatArs(item.unit_price_ars * item.quantity)}`).join('\n')
   const totals = `${order.discount_ars ? `Descuento (${order.coupon_code}): -${formatArs(order.discount_ars)}\n` : ''}${order.gift_card_ars ? `Pagado con tarjeta de regalo: -${formatArs(order.gift_card_ars)}\n` : ''}Envío: ${order.shipping_cost_ars ? formatArs(order.shipping_cost_ars) : 'Sin cargo'}\nTotal: ${formatArs(order.total_ars)}`
   const greeting = `Hola ${order.user_name.split(' ')[0]},`
-  const signature = '\nEquipo UnFocus\nSeeking clarity. Embrace yourself.'
+  const signature = '\nEquipo UnFocus\nBusca claridad. Abraza tu esencia.'
   let subject
   let body
   if (kind === 'created') {
@@ -904,7 +904,7 @@ app.post('/api/auth/register', limitAuthAttempts, async (request, response) => {
     void sendMail({
       to: email,
       subject: '¡Bienvenido/a a UnFocus!',
-      text: `Hola ${name.split(' ')[0]},\n\nTu cuenta en UnFocus ya está lista. Desde ella puedes seguir tus pedidos, guardar favoritos y retomar pagos pendientes.\n\nEquipo UnFocus\nSeeking clarity. Embrace yourself.`,
+      text: `Hola ${name.split(' ')[0]},\n\nTu cuenta en UnFocus ya está lista. Desde ella puedes seguir tus pedidos, guardar favoritos y retomar pagos pendientes.\n\nEquipo UnFocus\nBusca claridad. Abraza tu esencia.`,
       replyTo: storeSettings.email || undefined,
     })
     return createUserSession(request, response, user)
@@ -2067,11 +2067,15 @@ if (isProduction) {
     const product = row ? productFromRow(row) : null
     const legalPage = typeof request.query.legal === 'string' ? request.query.legal : request.query.contacto === '1' ? 'contact' : null
     const aboutPage = request.query.sobre === '1'
+    const diaryPage = request.query.diario === '1'
+    const shopPage = request.query.tienda === '1'
     const isInvalidPage = request.path !== '/'
       || (request.query.producto !== undefined && (!slug || !product))
       || (request.query.legal !== undefined && (!legalPage || !legalPageSlugs.includes(legalPage)))
       || (request.query.contacto !== undefined && request.query.contacto !== '1')
-      || (request.query.sobre !== undefined && (!aboutPage || slug || request.query.legal !== undefined || request.query.contacto !== undefined))
+      || (request.query.sobre !== undefined && (!aboutPage || slug || request.query.legal !== undefined || request.query.contacto !== undefined || request.query.diario !== undefined || request.query.tienda !== undefined))
+      || (request.query.diario !== undefined && (!diaryPage || slug || request.query.legal !== undefined || request.query.contacto !== undefined || request.query.sobre !== undefined || request.query.tienda !== undefined))
+      || (request.query.tienda !== undefined && (!shopPage || slug || request.query.legal !== undefined || request.query.contacto !== undefined || request.query.sobre !== undefined || request.query.diario !== undefined))
     const requestsMarkdown = (request.get('accept') || '').split(',').some((entry) => {
       const [mediaType, ...parameters] = entry.trim().split(';')
       return mediaType.toLowerCase() === 'text/markdown' && !parameters.some((parameter) => /^q=0(?:\.0*)?$/i.test(parameter.trim()))
@@ -2084,7 +2088,7 @@ if (isProduction) {
     if (requestsMarkdown) {
       response.status(isInvalidPage ? 404 : 200).type('text/markdown')
       if (isInvalidPage) return response.send('# Página no encontrada\n')
-      return response.send(buildMarkdownPage(seoBaseUrl, { product, products, contact: publicContact, legalPage, aboutPage }))
+      return response.send(buildMarkdownPage(seoBaseUrl, { product, products, contact: publicContact, legalPage, aboutPage, diaryPage, shopPage }))
     }
     if (isInvalidPage) {
       const notFound = injectAgentContent(html, '<main id="agent-content"><h1>Página no encontrada</h1><p>No encontramos la página que buscas.</p><p><a href="/">Volver al inicio</a></p></main>')
@@ -2096,22 +2100,62 @@ if (isProduction) {
       }).replace(/<script type="module"[^>]*><\/script>\s*/g, '')
       return response.type('html').send(notFoundHtml)
     }
-    const agentContent = renderAgentContent({ products, product, legalPage, contact: publicContact, aboutPage })
+    const agentContent = renderAgentContent({ products, product, legalPage, contact: publicContact, aboutPage, diaryPage, shopPage })
     let pageHtml = injectAgentContent(html, agentContent)
     if (product) {
       pageHtml = injectProductMeta(pageHtml, seoBaseUrl, product)
     } else if (aboutPage) {
       const canonical = `${seoBaseUrl}/?sobre=1`
       pageHtml = injectSiteMeta(pageHtml, seoBaseUrl, {
-        title: 'Sobre UnFocus | UnFocus Mall',
+        title: 'Nuestra mirada | UnFocus Mall',
         description: 'Conoce la propuesta de UnFocus Mall: ropa cómoda pensada desde la experiencia neurodivergente e información sensorial clara.',
         canonical,
         jsonLd: {
           '@context': 'https://schema.org',
           '@type': 'AboutPage',
-          name: 'Sobre UnFocus',
+          name: 'Nuestra mirada',
           url: canonical,
           about: { '@id': `${seoBaseUrl}/#organization` },
+          inLanguage: 'es-AR',
+        },
+      })
+    } else if (diaryPage) {
+      const canonical = `${seoBaseUrl}/?diario=1`
+      pageHtml = injectSiteMeta(pageHtml, seoBaseUrl, {
+        title: 'Diario | UnFocus Mall',
+        description: 'Vlogs, historias y novedades de UnFocus Mall. Suscríbete para recibir las nuevas publicaciones.',
+        canonical,
+        jsonLd: {
+          '@context': 'https://schema.org',
+          '@type': 'Blog',
+          name: 'Diario UnFocus',
+          description: 'Vlogs, historias y novedades de UnFocus Mall.',
+          url: canonical,
+          publisher: { '@id': `${seoBaseUrl}/#organization` },
+          inLanguage: 'es-AR',
+        },
+      })
+    } else if (shopPage) {
+      const canonical = `${seoBaseUrl}/?tienda=1`
+      pageHtml = injectSiteMeta(pageHtml, seoBaseUrl, {
+        title: 'Tienda | UnFocus Mall',
+        description: 'Explora las prendas y tarjetas de regalo disponibles en UnFocus Mall.',
+        canonical,
+        jsonLd: {
+          '@context': 'https://schema.org',
+          '@type': 'CollectionPage',
+          name: 'Tienda UnFocus',
+          description: 'Prendas y tarjetas de regalo disponibles en UnFocus Mall.',
+          url: canonical,
+          mainEntity: {
+            '@type': 'ItemList',
+            itemListElement: products.slice(0, 100).map((item, index) => ({
+              '@type': 'ListItem',
+              position: index + 1,
+              url: `${seoBaseUrl}/?producto=${encodeURIComponent(item.slug)}`,
+              name: item.name,
+            })),
+          },
           inLanguage: 'es-AR',
         },
       })
