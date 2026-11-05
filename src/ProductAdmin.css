@@ -3,7 +3,7 @@
 .admin-panel__heading .eyebrow, .admin-editor__heading .eyebrow, .admin-inventory__toolbar .eyebrow { margin-bottom: 8px; color: var(--brand-blue-deep); }
 .admin-panel__heading h1 { margin: 0; color: var(--brand-blue-deep); font: 600 clamp(34px, 4vw, 48px)/1.1 var(--display); }
 .admin-panel__heading p:not(.eyebrow) { margin: 9px 0 0; color: var(--ink-soft); font-size: 12px; }
-.admin-back-button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 12px; border: 1px solid var(--line); background: #fff; color: var(--brand-blue-deep); font: 600 11px var(--sans); cursor: pointer; }
+.admin-back-button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--brand-blue-deep); font: 600 11px var(--sans); cursor: pointer; }
 .admin-stats { display: grid; grid-template-columns: repeat(3, 1fr); margin: 24px 0 35px; border: 1px solid var(--line); background: #fff; }
 .admin-stats > div { display: flex; min-height: 76px; flex-direction: column; justify-content: center; gap: 5px; padding: 12px 18px; }
 .admin-stats > div + div { border-left: 1px solid var(--line); }
@@ -32,7 +32,7 @@
 .admin-product-cell strong { font-size: 12px; }
 .admin-product-cell span { color: var(--muted); font-size: 9px; }
 .admin-row-actions { display: flex; align-items: center; gap: 6px; }
-.admin-icon-button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); background: #fff; color: var(--brand-blue-deep); cursor: pointer; }
+.admin-icon-button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 50%; background: #fff; color: var(--brand-blue-deep); cursor: pointer; }
 .admin-icon-button:hover { border-color: var(--brand-blue); background: #f1f8fb; }
 .admin-icon-button--danger { color: var(--brand-red); }
 .admin-icon-button--danger:hover { border-color: var(--brand-red); background: #fff3f3; }
@@ -109,7 +109,7 @@
 .admin-contact-message__body button { display: inline-flex; align-items: center; gap: 5px; justify-self: end; padding: 5px 0; border: 0; background: transparent; color: var(--brand-blue-deep); font: 600 9px var(--sans); cursor: pointer; }
 .admin-editor__footer { display: flex; justify-content: flex-end; gap: 10px; padding: 20px 0 0; }
 .admin-editor__footer .button { min-height: 40px; }
-.admin-cancel-button { padding: 0 13px; border: 1px solid var(--line); background: #fff; color: var(--ink-soft); font: 600 10px var(--sans); cursor: pointer; }
+.admin-cancel-button { padding: 0 13px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--ink-soft); font: 600 10px var(--sans); cursor: pointer; }
 .admin-cancel-button:hover { border-color: var(--brand-blue); }
 
 @media (max-width: 760px) {
@@ -131,7 +131,7 @@
 .admin-order-card__shipping p { margin: 0; }
 .admin-tracking-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
 .admin-tracking-form input, .admin-settings-panel input { min-height: 36px; padding: 0 10px; border: 1px solid var(--line); background: #fff; font: 12px var(--sans); }
-.admin-tracking-form button { min-height: 36px; border: 0; background: var(--brand-blue-deep); color: #fff; font: 600 11px var(--sans); cursor: pointer; }
+.admin-tracking-form button { min-height: 36px; border: 0; border-radius: 999px; padding: 0 16px; background: var(--brand-blue-deep); color: #fff; font: 600 11px var(--sans); cursor: pointer; }
 .admin-settings-panel { margin-top: 28px; padding: 22px; border: 1px solid var(--line); background: #fff; }
 .admin-settings-panel__message { margin: 12px 0 0; color: var(--brand-blue-deep); font-size: 12px; }
 
@@ -146,7 +146,7 @@
 .admin-gallery__item img { width: 100%; aspect-ratio: 4 / 5; object-fit: contain; background: var(--paper); }
 .admin-gallery__name { color: var(--ink); font-size: 12px; font-weight: 600; }
 .admin-gallery__actions { display: flex; gap: 6px; }
-.admin-gallery__button { display: inline-grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--line); background: #fff; color: var(--brand-blue-deep); cursor: pointer; }
+.admin-gallery__button { display: inline-grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 50%; background: #fff; color: var(--brand-blue-deep); cursor: pointer; }
 .admin-gallery__button:hover { background: var(--paper); }
 .admin-gallery__button:focus-within, .admin-gallery__button:focus-visible, .admin-gallery__add:focus-within { outline: 3px solid var(--brand-blue-deep); outline-offset: 2px; }
 .admin-gallery__item--add { align-self: stretch; }
