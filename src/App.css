@@ -312,6 +312,9 @@
 .brand--footer .brand__logo { width: 135px; }
 .footer-links { display: flex; gap: 20px; }
 .footer-links a { color: #566260; font-size: 10px; }
+.footer-legal { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: center; gap: 10px 24px; width: 100%; margin: 0 auto; padding: 8px 0 16px; }
+.footer-legal a { color: #566260; font-size: 10px; line-height: 1.5; text-decoration: none; }
+.footer-legal a:hover { color: var(--brand-blue-deep); text-decoration: underline; text-underline-offset: 3px; }
 .footer-copyright { white-space: nowrap; }
 
 .toast { position: fixed; z-index: 20; right: 24px; bottom: 24px; max-width: calc(100% - 48px); padding: 14px 18px; background: var(--ink); color: white; box-shadow: 0 8px 24px rgba(0,0,0,.16); font-size: 12px; animation: rise-in .22s both; }
@@ -442,6 +445,7 @@
   .site-footer { width: calc(100% - 10%); min-height: 140px; flex-wrap: wrap; justify-content: space-between; gap: 13px; padding: 24px 0; }
   .site-footer > span:nth-child(2) { order: 3; width: 100%; }
   .footer-links { gap: 12px; }
+  .footer-legal { gap: 10px 18px; padding: 4px 0 10px; }
   .footer-links a, .footer-copyright { font-size: 9px; }
   .cart-drawer { padding: 23px 20px 20px; }
 }
