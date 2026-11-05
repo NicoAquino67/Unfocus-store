@@ -6,13 +6,11 @@
 .header-inner { width: min(1320px, calc(100% - 11%)); min-height: 78px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; gap: 24px; }
 .brand { display: inline-flex; align-items: center; width: fit-content; color: var(--ink); text-decoration: none; }
 .brand__logo-wrap { position: relative; display: block; isolation: isolate; line-height: 0; transition: transform .24s cubic-bezier(.2,.7,.2,1); }
-.brand:hover .brand__logo-wrap, .brand:focus-visible .brand__logo-wrap { transform: scale(1.045); }
+.brand:hover .brand__logo-wrap, .brand:focus-visible .brand__logo-wrap { transform: scale(1.035); }
 .brand__logo { position: relative; z-index: 1; display: block; width: 156px; max-height: 48px; object-fit: contain; background: transparent; }
-.brand__reveal { position: absolute; z-index: 2; inset: -7px -10px; overflow: hidden; clip-path: inset(0 100% 0 0); transition: clip-path .68s cubic-bezier(.22,.75,.2,1); }
-.brand__highlight { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-.brand__highlight::before { position: absolute; inset: -6%; background-image: radial-gradient(circle, rgba(174,155,208,.96) 0 1.35px, transparent 1.8px); background-size: 7px 7px; content: ''; mask-image: radial-gradient(ellipse 47% 92% at center, #000 36%, rgba(0,0,0,.82) 59%, transparent 100%); }
-.brand__logo--white { z-index: 1; }
-.brand:hover .brand__reveal, .brand:focus-visible .brand__reveal { clip-path: inset(0 0 0 0); }
+.brand__glint { position: absolute; z-index: 2; inset: 0; overflow: hidden; background: transparent; mask-repeat: no-repeat; mask-position: center; mask-size: contain; -webkit-mask-repeat: no-repeat; -webkit-mask-position: center; -webkit-mask-size: contain; pointer-events: none; }
+.brand__glint::before { position: absolute; top: -25%; bottom: -25%; left: -45%; width: 32%; background: linear-gradient(105deg, transparent, rgba(255,255,255,.92), transparent); content: ''; transform: translateX(0) skewX(-20deg); }
+.brand:hover .brand__glint::before, .brand:focus-visible .brand__glint::before { transform: translateX(480%) skewX(-20deg); transition: transform .7s cubic-bezier(.2,.7,.2,1); }
 .main-nav { display: flex; justify-content: center; gap: 28px; white-space: nowrap; }
 .main-nav a, .footer-links a { color: var(--ink); text-decoration: none; font-size: 12px; transition: color .2s ease; }
 .main-nav a:hover, .footer-links a:hover { color: var(--coral); }

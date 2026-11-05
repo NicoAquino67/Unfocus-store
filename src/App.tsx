@@ -20,7 +20,6 @@ import {
   X,
 } from 'lucide-react'
 import unfocusLogo from './assets/logo-full-color.png'
-import unfocusLogoWhite from './assets/logo-blanco.png'
 import PriceTag from './PriceTag'
 import { categories, getSalePrice, formatPrice, getDefaultSize, getProductImage, getProductFacets, getStockForSize, giftCardAmounts, giftCardMaximum, giftCardMinimum, isValidGiftCardAmount, initialProducts, normalizeProductFacets, garmentCuts, productAudiences, productGenders, sizes, type CategoryFilter, type DisplayCurrency, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
 import { apiRequest, type AccountNotification, type AccountSummary, type AccountUser, type ProductReview, type ShippingRate, type StoreConfig } from './api'
@@ -1028,7 +1027,7 @@ function App() {
 
       <header className="site-header">
         <div className="header-inner">
-          <a className="brand" href="/" onClick={(event) => { event.preventDefault(); navigateToStore() }} aria-label="UnFocus, inicio"><span className="brand__logo-wrap"><span className="brand__reveal" aria-hidden="true"><span className="brand__highlight"><img className="brand__logo brand__logo--white" src={unfocusLogoWhite} alt="" width="1610" height="395" /></span></span><img className="brand__logo" src={unfocusLogo} alt="UnFocus" width="4724" height="1157" /></span></a>
+          <a className="brand" href="/" onClick={(event) => { event.preventDefault(); navigateToStore() }} aria-label="UnFocus, inicio"><span className="brand__logo-wrap"><img className="brand__logo" src={unfocusLogo} alt="UnFocus" width="4724" height="1157" /><span className="brand__glint" style={{ maskImage: `url("${unfocusLogo}")`, WebkitMaskImage: `url("${unfocusLogo}")` }} aria-hidden="true" /></span></a>
           <nav className="main-nav" aria-label="Navegación principal"><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#coleccion' : '#coleccion'}>Tienda</a><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#historia' : '#historia'}>Nuestra mirada</a><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#newsletter' : '#newsletter'}>Diario</a><a href="?contacto=1" onClick={(event) => { event.preventDefault(); navigateToContact() }}>Contacto</a></nav>
           <div className="header-actions">
             <div className={`search-box${isSearchOpen ? ' is-open' : ''}`}>
@@ -1214,7 +1213,7 @@ function App() {
       </main>
 
       <footer className="site-footer">
-        <a className="brand brand--footer" href="/" onClick={(event) => { event.preventDefault(); navigateToStore() }} aria-label="UnFocus, inicio"><span className="brand__logo-wrap"><span className="brand__reveal" aria-hidden="true"><span className="brand__highlight"><img className="brand__logo brand__logo--white" src={unfocusLogoWhite} alt="" width="1610" height="395" /></span></span><img className="brand__logo" src={unfocusLogo} alt="UnFocus" width="4724" height="1157" /></span></a><span>Seeking clarity. Embrace yourself.</span>
+        <a className="brand brand--footer" href="/" onClick={(event) => { event.preventDefault(); navigateToStore() }} aria-label="UnFocus, inicio"><span className="brand__logo-wrap"><img className="brand__logo" src={unfocusLogo} alt="UnFocus" width="4724" height="1157" /><span className="brand__glint" style={{ maskImage: `url("${unfocusLogo}")`, WebkitMaskImage: `url("${unfocusLogo}")` }} aria-hidden="true" /></span></a><span>Seeking clarity. Embrace yourself.</span>
         <div className="footer-links"><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#coleccion' : '#coleccion'}>Tienda</a><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#historia' : '#historia'}>Nuestra mirada</a><a href="?contacto=1" onClick={(event) => { event.preventDefault(); navigateToContact() }}>Contacto</a></div>
         <nav className="footer-legal" aria-label="Información legal">{legalPageKeys.map((key) => <a key={key} href={`?legal=${key}`} onClick={(event) => { event.preventDefault(); navigateToLegal(key) }}>{legalPageTitles[key]}</a>)}</nav>
         {storeConfig?.store.legalName && <p className="footer-store">{storeConfig.store.legalName}{storeConfig.store.taxId ? ` · CUIT ${storeConfig.store.taxId}` : '}{storeConfig.store.address ? ` · ${storeConfig.store.address}` : '}</p>}<span className="footer-copyright">© 2026 UnFocus</span>
