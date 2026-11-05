@@ -656,10 +656,12 @@ function App() {
   const notificationMenuRef = useRef<HTMLDivElement>(null)
   const notificationsSeenInView = useRef(new Set<number>())
   const [notice, setNotice] = useState(() => {
-    const paymentStatus = new URLSearchParams(window.location.search).get('payment')
-    if (paymentStatus === 'pending') return 'Tu pago está en revisión. Te avisaremos cuando quede confirmado.'
-    if (paymentStatus === 'failure') return 'No se pudo completar el pago. Puedes intentarlo nuevamente desde tu cuenta.'
-    if (paymentStatus === 'success' && !new URLSearchParams(window.location.search).get('payment_id')) {
+    const searchParams = new URLSearchParams(window.location.search)
+    const paymentStatus = searchParams.get('payment') ?? searchParams.get('collection_status') ?? searchParams.get('status')
+    const paymentId = searchParams.get('payment_id') ?? searchParams.get('collection_id')
+    if (paymentStatus === 'pending' && !paymentId) return 'Tu pago está en revisión. Te avisaremos cuando quede confirmado.'
+    if (paymentStatus === 'failure' && !paymentId) return 'No se pudo completar el pago. Puedes intentarlo nuevamente desde tu cuenta.'
+    if (paymentStatus && !paymentId) {
       return 'Volviste de Mercado Pago, pero no pudimos verificar el pago. Revisa el estado desde tu cuenta en unos minutos.'
     }
     return ''
@@ -667,15 +669,15 @@ function App() {
 
   useEffect(() => {
     const url = new URL(window.location.href)
-    const paymentStatus = url.searchParams.get('payment')
+    const paymentStatus = url.searchParams.get('payment') ?? url.searchParams.get('collection_status') ?? url.searchParams.get('status')
+    const paymentId = url.searchParams.get('payment_id') ?? url.searchParams.get('collection_id')
     if (!paymentStatus) return
-    const paymentId = url.searchParams.get('payment_id')
-    for (const parameter of ['payment', 'payment_id', 'status', 'merchant_order_id', 'preference_id', 'external_reference']) {
+    for (const parameter of ['payment', 'payment_id', 'status', 'collection_id', 'collection_status', 'merchant_order_id', 'preference_id', 'external_reference', 'payment_type', 'site_id', 'processing_mode', 'merchant_account_id']) {
       url.searchParams.delete(parameter)
     }
     window.history.replaceState({}, '', url)
 
-    if (paymentStatus !== 'success' || !paymentId) return
+    if (!paymentId) return
 
     let isCurrent = true
     apiRequest<{ orderId: number; orderStatus: string; paymentStatus: string }>(`/api/payments/verify-return?payment_id=${encodeURIComponent(paymentId)}`)
@@ -685,6 +687,8 @@ function App() {
           setNotice('Compra confirmada. Gracias por tu pedido.')
           setOrderToOpen(orderId)
           setOrderOpenRequestId((current) => current + 1)
+        } else if (orderStatus === 'cancelled') {
+          setNotice('El pedido figura cancelado. Si Mercado Pago debitó el pago, contacta con soporte para revisarlo.')
         } else {
           setNotice('Tu pago todavía está en revisión. Actualizaremos el pedido cuando Mercado Pago lo confirme.')
         }
