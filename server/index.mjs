@@ -2046,7 +2046,10 @@ app.get('/api/payments/verify-return', async (request, response) => {
     const paymentResponse = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(paymentId)}`, {
       headers: { Authorization: `Bearer ${mercadoPagoAccessToken}` },
     })
-    if (!paymentResponse.ok) return response.status(502).json({ error: 'No se pudo verificar el pago con Mercado Pago.' })
+    if (!paymentResponse.ok) {
+      console.error(`Mercado Pago rejected return verification (${paymentResponse.status}).`)
+      return response.status(502).json({ error: 'No se pudo verificar el pago con Mercado Pago.' })
+    }
     const payment = await paymentResponse.json()
     const result = applyMercadoPagoPayment(payment, paymentId)
     if (!result) return response.status(404).json({ error: 'No se encontró el pedido asociado al pago.' })
