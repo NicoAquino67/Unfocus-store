@@ -18,7 +18,7 @@ const legalTitles = {
   baja: 'Botón de baja',
   faq: 'Preguntas y respuestas',
 }
-const contentPageUrl = (baseUrl, page) => `${baseUrl}/?${page === 'contact' ? 'contacto=1' : `legal=${encodeURIComponent(page)}`}`
+const contentPageUrl = (baseUrl, page) => `${baseUrl}/?${page === 'contact' ? 'contacto=1' : page === 'about' ? 'sobre=1' : `legal=${encodeURIComponent(page)}`}`
 const getLegalSections = (page, contact) => {
   const seller = contact.legalName || 'UnFocus'
   const sellerDetails = [contact.taxId && `CUIT ${contact.taxId}`, contact.address].filter(Boolean).join(' · ')
@@ -80,6 +80,7 @@ export const buildHomepageJsonLd = (baseUrl, { products = [], store = {}, sameAs
     url: `${baseUrl}/`,
     logo: { '@type': 'ImageObject', url: `${baseUrl}/favicon.svg` },
     description: 'Tienda online de ropa cómoda, pensada desde la experiencia neurodivergente, con información sensorial clara.',
+    ...(store.phone ? { telephone: store.phone } : {}),
     ...(sameAs.length ? { sameAs } : {}),
     ...(store.email || store.phone ? {
       contactPoint: {
@@ -153,6 +154,7 @@ export const buildLlmsTxt = (baseUrl, products = []) => {
     '## Páginas principales',
     `- [Inicio](${baseUrl}/)`,
     `- [Tienda](${baseUrl}/#coleccion)`,
+    `- [Sobre UnFocus](${contentPageUrl(baseUrl, 'about')})`,
     `- [Nuestra mirada](${baseUrl}/#historia)`,
     `- [Contacto](${contentPageUrl(baseUrl, 'contact')})`,
     ...Object.entries(legalTitles).map(([slug, title]) => `- [${title}](${contentPageUrl(baseUrl, slug)})`),
@@ -166,7 +168,7 @@ export const buildLlmsTxt = (baseUrl, products = []) => {
   return `${lines.join('\n')}\n`
 }
 
-export const buildMarkdownPage = (baseUrl, { product, products = [], contact = {}, legalPage = null } = {}) => {
+export const buildMarkdownPage = (baseUrl, { product, products = [], contact = {}, legalPage = null, aboutPage = false } = {}) => {
   if (product) {
     return `# ${product.name}\n\n${productDescription(product)}\n\n- Categoría: ${product.category}\n- Precio: ARS ${Number(product.salePrice ?? product.price).toLocaleString('es-AR')}\n- [Volver a la tienda](${baseUrl}/#coleccion)\n`
   }
@@ -176,6 +178,9 @@ export const buildMarkdownPage = (baseUrl, { product, products = [], contact = {
   }
   if (legalPage === 'contact') {
     return `# Contacto\n\nComunícate con UnFocus Mall para consultas sobre productos y pedidos.\n${contact.email ? `\n- Correo: ${contact.email}\n` : ''}${contact.phone ? `- Teléfono: ${contact.phone}\n` : ''}\n- [Inicio](${baseUrl}/)\n`
+  }
+  if (aboutPage) {
+    return `# Sobre UnFocus\n\nUnFocus Mall es una tienda online de ropa cómoda pensada desde la experiencia neurodivergente. Describimos cada prenda con claridad para que puedas elegir a tu ritmo, considerando textura, costuras, ajuste y etiquetas.\n\n- [Nuestra mirada](${baseUrl}/#historia)\n- [Contacto](${contentPageUrl(baseUrl, 'contact')})\n- [Términos y condiciones](${contentPageUrl(baseUrl, 'terminos')})\n- [Inicio](${baseUrl}/)\n`
   }
   const lines = [
     '# UnFocus Mall',
@@ -190,6 +195,7 @@ export const buildMarkdownPage = (baseUrl, { product, products = [], contact = {
     '',
     '## Información',
     `- [Tienda](${baseUrl}/#coleccion)`,
+    `- [Sobre UnFocus](${contentPageUrl(baseUrl, 'about')})`,
     `- [Nuestra mirada](${baseUrl}/#historia)`,
     `- [Contacto](${contentPageUrl(baseUrl, 'contact')})`,
     `- [Términos y condiciones](${contentPageUrl(baseUrl, 'terminos')})`,
@@ -200,7 +206,7 @@ export const buildMarkdownPage = (baseUrl, { product, products = [], contact = {
   return `${lines.join('\n')}\n`
 }
 
-export const renderAgentContent = ({ products = [], product = null, legalPage = null, contact = {} } = {}) => {
+export const renderAgentContent = ({ products = [], product = null, legalPage = null, contact = {}, aboutPage = false } = {}) => {
   if (product) {
     const images = (product.gallery ?? []).filter((image) => image.src).slice(0, 5)
       .map((image) => `<img src="${escapeAttribute(absoluteUrl('', image.src))}" alt="${escapeAttribute(image.alt || product.name)}" />`).join('')
@@ -211,6 +217,9 @@ export const renderAgentContent = ({ products = [], product = null, legalPage = 
     const phone = escapeAttribute(contact.phone)
     return `<main id="agent-content"><h1>Contacto</h1><p>Comunícate con UnFocus Mall por consultas sobre productos y pedidos.</p>${contact.email ? `<p>Correo electrónico: <a href="mailto:${email}">${escapeHtml(contact.email)}</a></p>` : ''}${contact.phone ? `<p>Teléfono: <a href="tel:${phone}">${escapeHtml(contact.phone)}</a></p>` : ''}<p><a href="/">Inicio</a></p></main>`
   }
+  if (aboutPage) {
+    return `<main id="agent-content"><h1>Sobre UnFocus</h1><p>UnFocus Mall es una tienda online de ropa cómoda pensada desde la experiencia neurodivergente.</p><p>Describimos cada prenda con claridad —textura, costuras, ajuste y etiquetas— para que puedas decidir cómo se sentirá antes de que llegue a casa. Sin reglas sobre cómo vestirte. Sin prisa.</p><nav aria-label="Más información"><a href="/#historia">Nuestra mirada</a> · <a href="/?contacto=1">Contacto</a> · <a href="/?legal=terminos">Términos y condiciones</a></nav></main>`
+  }
   if (legalPage && legalTitles[legalPage]) {
     const sections = getLegalSections(legalPage, contact)
       .map(([heading, text]) => `<section><h2>${escapeHtml(heading)}</h2><p>${escapeHtml(text)}</p></section>`).join('')
@@ -220,7 +229,7 @@ export const renderAgentContent = ({ products = [], product = null, legalPage = 
     return `<main id="agent-content"><h1>${escapeHtml(legalTitles[legalPage])}</h1>${sections}${contactLink}<nav aria-label="Páginas legales">${Object.entries(legalTitles).map(([slug, title]) => `<a href="/?legal=${encodeURIComponent(slug)}">${escapeHtml(title)}</a>`).join(' · ')}</nav></main>`
   }
   const items = products.slice(0, 30).map((item) => `<article><h2><a href="${escapeAttribute(productUrl('', item))}">${escapeHtml(item.name)}</a></h2><p>${escapeHtml(productDescription(item))}</p><p>ARS ${Number(item.salePrice ?? item.price).toLocaleString('es-AR')}</p></article>`).join('')
-  return `<main id="agent-content"><section><h1>Ropa cómoda pensada desde la experiencia neurodivergente</h1><p>UnFocus Mall ofrece prendas cómodas con información sensorial clara para elegir a tu ritmo.</p><p><a href="#coleccion">Ver la tienda</a> · <a href="#historia">Nuestra mirada</a> · <a href="/?contacto=1">Contacto</a> · <a href="/?legal=terminos">Términos y condiciones</a></p></section><section id="coleccion"><h2>Productos</h2>${items || '<p>El catálogo se está actualizando. Vuelve pronto para ver los productos.</p>'}</section><section id="historia"><h2>Nuestra mirada</h2><p>Cada cuerpo siente distinto. Describimos cada prenda con claridad para que puedas decidir cómo se sentirá antes de que llegue a casa. Sin reglas sobre cómo vestirte. Sin prisa.</p></section><section><h2>Contacto</h2>${contact.email ? `<p>Correo electrónico: <a href="mailto:${escapeAttribute(contact.email)}">${escapeHtml(contact.email)}</a></p>` : ''}${contact.phone ? `<p>Teléfono: <a href="tel:${escapeAttribute(contact.phone)}">${escapeHtml(contact.phone)}</a></p>` : ''}<a href="/?contacto=1">Escríbenos</a></section><nav aria-label="Información legal">${Object.entries(legalTitles).map(([slug, title]) => `<a href="/?legal=${encodeURIComponent(slug)}">${escapeHtml(title)}</a>`).join(' · ')}</nav></main>`
+  return `<main id="agent-content"><section><h1>Ropa cómoda pensada desde la experiencia neurodivergente</h1><p>UnFocus Mall ofrece prendas cómodas con información sensorial clara para elegir a tu ritmo.</p><p><a href="#coleccion">Ver la tienda</a> · <a href="${contentPageUrl('', 'about')}">Sobre UnFocus</a> · <a href="#historia">Nuestra mirada</a> · <a href="/?contacto=1">Contacto</a> · <a href="/?legal=terminos">Términos y condiciones</a></p></section><section id="coleccion"><h2>Productos</h2>${items || '<p>El catálogo se está actualizando. Vuelve pronto para ver los productos.</p>'}</section><section id="historia"><h2>Nuestra mirada</h2><p>Cada cuerpo siente distinto. Describimos cada prenda con claridad para que puedas decidir cómo se sentirá antes de que llegue a casa. Sin reglas sobre cómo vestirte. Sin prisa.</p></section><section><h2>Contacto</h2>${contact.email ? `<p>Correo electrónico: <a href="mailto:${escapeAttribute(contact.email)}">${escapeHtml(contact.email)}</a></p>` : ''}${contact.phone ? `<p>Teléfono: <a href="tel:${escapeAttribute(contact.phone)}">${escapeHtml(contact.phone)}</a></p>` : ''}<a href="/?contacto=1">Escríbenos</a></section><nav aria-label="Información legal">${Object.entries(legalTitles).map(([slug, title]) => `<a href="/?legal=${encodeURIComponent(slug)}">${escapeHtml(title)}</a>`).join(' · ')}</nav></main>`
 }
 
 export const injectAgentContent = (html, content) => html.replace('<!--SSR_CONTENT-->', () => content)
@@ -250,6 +259,7 @@ export const buildMcpServerCard = (baseUrl) => ({
     description: 'Consulta el catálogo público de prendas cómodas de UnFocus Mall.',
     homepage: baseUrl,
   },
+  endpoint: `${baseUrl}/mcp`,
   transport: {
     type: 'streamable-http',
     url: `${baseUrl}/mcp`,
@@ -278,6 +288,7 @@ export const buildMcpServerCard = (baseUrl) => ({
 export const buildSitemapXml = (baseUrl, products, legalPages = []) => {
   const urls = [
     { loc: `${baseUrl}/` },
+    { loc: contentPageUrl(baseUrl, 'about') },
     { loc: `${baseUrl}/?contacto=1` },
     ...legalPages.map((page) => ({ loc: `${baseUrl}/?legal=${encodeURIComponent(page)}` })),
     ...products.map((product) => ({ loc: productUrl(baseUrl, product), lastmod: product.createdAt ? String(product.createdAt).slice(0, 10) : undefined })),

@@ -107,9 +107,9 @@ Cuando `MP_ACCESS_TOKEN` existe, el checkout crea una preferencia de pago (con e
 ### Descubrimiento por agentes
 
 - `robots.txt` publica `Content-Signal: search=yes, ai-train=no`.
-- Las páginas públicas se sirven con contenido HTML inicial, título, descripción, canonical y datos JSON-LD; las rutas desconocidas devuelven 404.
-- `/llms.txt` ofrece el índice del sitio y `/` negocia Markdown con `Accept: text/markdown`.
-- `/.well-known/mcp/server-card.json` anuncia el endpoint MCP de solo lectura `/mcp`, que expone `search_products`.
+- Las páginas públicas se sirven con contenido HTML inicial, título, descripción, canonical y datos JSON-LD; la organización publica teléfono y perfiles sociales. Las rutas desconocidas devuelven 404.
+- `/llms.txt` ofrece el índice del sitio; `/?sobre=1` sirve la página «Sobre UnFocus» y `/` negocia Markdown con `Accept: text/markdown`.
+- `/.well-known/mcp/server-card.json` anuncia la URL del endpoint MCP de solo lectura `/mcp`, que expone `search_products`.
 - En navegadores compatibles, la tienda registra `search_unfocus_products` mediante WebMCP.
 
 ### Paquete Docker

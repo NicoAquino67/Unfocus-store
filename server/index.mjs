@@ -2066,10 +2066,12 @@ if (isProduction) {
     const row = slug ? selectProductBySlug.get(slug) : null
     const product = row ? productFromRow(row) : null
     const legalPage = typeof request.query.legal === 'string' ? request.query.legal : request.query.contacto === '1' ? 'contact' : null
+    const aboutPage = request.query.sobre === '1'
     const isInvalidPage = request.path !== '/'
       || (request.query.producto !== undefined && (!slug || !product))
       || (request.query.legal !== undefined && (!legalPage || !legalPageSlugs.includes(legalPage)))
       || (request.query.contacto !== undefined && request.query.contacto !== '1')
+      || (request.query.sobre !== undefined && (!aboutPage || slug || request.query.legal !== undefined || request.query.contacto !== undefined))
     const requestsMarkdown = (request.get('accept') || '').split(',').some((entry) => {
       const [mediaType, ...parameters] = entry.trim().split(';')
       return mediaType.toLowerCase() === 'text/markdown' && !parameters.some((parameter) => /^q=0(?:\.0*)?$/i.test(parameter.trim()))
@@ -2082,7 +2084,7 @@ if (isProduction) {
     if (requestsMarkdown) {
       response.status(isInvalidPage ? 404 : 200).type('text/markdown')
       if (isInvalidPage) return response.send('# Página no encontrada\n')
-      return response.send(buildMarkdownPage(seoBaseUrl, { product, products, contact: publicContact, legalPage }))
+      return response.send(buildMarkdownPage(seoBaseUrl, { product, products, contact: publicContact, legalPage, aboutPage }))
     }
     if (isInvalidPage) {
       const notFound = injectAgentContent(html, '<main id="agent-content"><h1>Página no encontrada</h1><p>No encontramos la página que buscas.</p><p><a href="/">Volver al inicio</a></p></main>')
@@ -2094,10 +2096,25 @@ if (isProduction) {
       }).replace(/<script type="module"[^>]*><\/script>\s*/g, '')
       return response.type('html').send(notFoundHtml)
     }
-    const agentContent = renderAgentContent({ products, product, legalPage, contact: publicContact })
+    const agentContent = renderAgentContent({ products, product, legalPage, contact: publicContact, aboutPage })
     let pageHtml = injectAgentContent(html, agentContent)
     if (product) {
       pageHtml = injectProductMeta(pageHtml, seoBaseUrl, product)
+    } else if (aboutPage) {
+      const canonical = `${seoBaseUrl}/?sobre=1`
+      pageHtml = injectSiteMeta(pageHtml, seoBaseUrl, {
+        title: 'Sobre UnFocus | UnFocus Mall',
+        description: 'Conoce la propuesta de UnFocus Mall: ropa cómoda pensada desde la experiencia neurodivergente e información sensorial clara.',
+        canonical,
+        jsonLd: {
+          '@context': 'https://schema.org',
+          '@type': 'AboutPage',
+          name: 'Sobre UnFocus',
+          url: canonical,
+          about: { '@id': `${seoBaseUrl}/#organization` },
+          inLanguage: 'es-AR',
+        },
+      })
     } else if (legalPage === 'contact' || legalPage) {
       const title = legalPage === 'contact' ? 'Contacto | UnFocus' : `${legalPageTitles[legalPage]} | UnFocus`
       const canonical = legalPage === 'contact' ? `${seoBaseUrl}/?contacto=1` : `${seoBaseUrl}/?legal=${encodeURIComponent(legalPage)}`
