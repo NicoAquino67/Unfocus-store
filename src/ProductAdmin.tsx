@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent, type MouseEvent } from 'react'
 import { ArrowLeft, Check, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import AdminCoupons from './AdminCoupons'
 import AdminGiftCards from './AdminGiftCards'
@@ -26,6 +26,7 @@ type ProductDraft = {
   description: string
   designDescription: string
   images: string[]
+  colors: { name: string; hex: string; imageSources: string[] }[]
 }
 
 type ProductAdminProps = {
@@ -68,10 +69,12 @@ const emptyDraft = (): ProductDraft => ({
   description: '',
   designDescription: '',
   images: [],
+  colors: [],
 })
 
 const productToDraft = (product: Product): ProductDraft => {
   const facets = getProductFacets(product.features)
+  const images = product.gallery?.length ? product.gallery.map((view) => view.src) : [getProductImage(product, 0), getProductImage(product, 1)]
   return {
     id: product.id,
     slug: product.slug,
@@ -91,7 +94,12 @@ const productToDraft = (product: Product): ProductDraft => {
     discountValue: product.discountValue ? String(product.discountValue) : '',
     description: product.description,
     designDescription: product.designDescription,
-    images: product.gallery?.length ? product.gallery.map((view) => view.src) : [getProductImage(product, 0), getProductImage(product, 1)],
+    images,
+    colors: (product.colors ?? []).map((color) => ({
+      name: color.name,
+      hex: color.hex,
+      imageSources: color.imageIndexes.map((index) => images[index]).filter((image): image is string => Boolean(image)),
+    })),
   }
 }
 
@@ -219,13 +227,60 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
       for (const file of files) optimized.push(await optimizeImage(file))
       setDraft((current) => {
         if (!current) return current
-        if (replaceIndex !== undefined) return { ...current, images: current.images.map((image, index) => index === replaceIndex ? optimized[0] : image) }
+        if (replaceIndex !== undefined) {
+          const previousImage = current.images[replaceIndex]
+          return {
+            ...current,
+            images: current.images.map((image, index) => index === replaceIndex ? optimized[0] : image),
+            colors: current.colors.map((color) => ({
+              ...color,
+              imageSources: color.imageSources.map((image) => image === previousImage ? optimized[0] : image),
+            })),
+          }
+        }
         return { ...current, images: [...current.images, ...optimized].slice(0, maxProductImages) }
       })
     } catch {
       setFormError('No se pudo procesar esa imagen. Prueba con otro archivo. El formato recomendado es JPG o PNG.')
     } finally {
       setProcessingImage(false)
+    }
+  }
+
+  const sampleColor = (event: MouseEvent<HTMLButtonElement>, colorIndex: number, imageSource: string) => {
+    const image = event.currentTarget.querySelector('img')
+    if (!image || !image.naturalWidth || !image.naturalHeight) {
+      setFormError('No se pudo leer la foto para tomar la muestra de color.')
+      return
+    }
+    const bounds = image.getBoundingClientRect()
+    const scale = Math.min(bounds.width / image.naturalWidth, bounds.height / image.naturalHeight)
+    const offsetX = (bounds.width - image.naturalWidth * scale) / 2
+    const offsetY = (bounds.height - image.naturalHeight * scale) / 2
+    const x = Math.floor((event.clientX - bounds.left - offsetX) / scale)
+    const y = Math.floor((event.clientY - bounds.top - offsetY) / scale)
+    if (x < 0 || y < 0 || x >= image.naturalWidth || y >= image.naturalHeight) {
+      setFormError('Haz clic sobre la prenda, no sobre el fondo de la foto, para tomar la muestra.')
+      return
+    }
+    try {
+      const canvas = document.createElement('canvas')
+      canvas.width = image.naturalWidth
+      canvas.height = image.naturalHeight
+      const context = canvas.getContext('2d', { willReadFrequently: true })
+      if (!context) throw new Error('No se pudo procesar la muestra de color.')
+      context.drawImage(image, 0, 0)
+      const [red, green, blue] = context.getImageData(x, y, 1, 1).data
+      const hex = `#${[red, green, blue].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`.toUpperCase()
+      setDraft((current) => current ? {
+        ...current,
+        colors: current.colors.map((color, index) => index === colorIndex
+          ? { ...color, hex, imageSources: color.imageSources.includes(imageSource) ? color.imageSources : [...color.imageSources, imageSource] }
+          : color),
+      } : current)
+      setFormError('')
+    } catch {
+      setFormError('No se pudo tomar la muestra de esa foto. Vuelve a subirla e inténtalo otra vez.')
     }
   }
 
@@ -244,6 +299,11 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
     )
     if (draft.images.length < minProductImages) {
       setFormError(`Sube al menos ${minProductImages} imágenes (máximo ${maxProductImages}).`)
+      return
+    }
+    const configuredColors = draft.colors.filter((color) => color.name.trim() || color.imageSources.length || color.hex !== '#ffffff')
+    if (configuredColors.some((color) => !color.name.trim() || !color.imageSources.length)) {
+      setFormError('Completa el nombre y selecciona al menos una foto para cada color, o quita el color incompleto.')
       return
     }
     const product: Product = {
@@ -274,6 +334,13 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
         src,
         alt: `${index === 0 ? 'Frente' : index === 1 ? 'Espalda' : 'Vista ' + (index + 1)} de la camiseta ${name}`,
         label: index === 0 ? 'Frente' : index === 1 ? 'Espalda' : `Vista ${index + 1}`,
+      })),
+      colors: configuredColors.map((color) => ({
+        name: color.name.trim(),
+        hex: color.hex,
+        imageIndexes: color.imageSources
+          .map((image) => draft.images.indexOf(image))
+          .filter((index) => index >= 0),
       })),
       badge: draft.discountType === 'none' ? '' : 'PROMO',
     }
@@ -506,7 +573,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
 
           <fieldset className="admin-gallery">
             <legend>Imágenes del producto ({draft.images.length}/{maxProductImages}, mínimo {minProductImages})</legend>
-            <p className="admin-gallery__help">La primera es el frente y la segunda la espalda. Se optimizan al subirlas.</p>
+            <p className="admin-gallery__help">La primera es el frente y la segunda la espalda. Usa imágenes de 1200 × 1500 px (4:5), con la prenda centrada y margen alrededor; se optimizan al subirlas.</p>
             <ul className="admin-gallery__list">
               {draft.images.map((image, index) => {
                 const label = index === 0 ? 'Frente' : index === 1 ? 'Espalda' : `Imagen ${index + 1}`
@@ -516,7 +583,11 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
                     <span className="admin-gallery__name">{label}</span>
                     <span className="admin-gallery__actions">
                       <label className="admin-gallery__button"><ImagePlus size={15} aria-hidden="true" /><span className="visually-hidden">Cambiar {label}</span><input className="visually-hidden" type="file" accept="image/*" disabled={processingImage} onChange={(event) => { void handleImages(Array.from(event.currentTarget.files ?? []), index); event.currentTarget.value = '' }} /></label>
-                      <button className="admin-gallery__button" type="button" onClick={() => setDraft({ ...draft, images: draft.images.filter((_, imageIndex) => imageIndex !== index) })}><Trash2 size={15} aria-hidden="true" /><span className="visually-hidden">Quitar {label}</span></button>
+                      <button className="admin-gallery__button" type="button" onClick={() => setDraft({
+                        ...draft,
+                        images: draft.images.filter((_, imageIndex) => imageIndex !== index),
+                        colors: draft.colors.map((color) => ({ ...color, imageSources: color.imageSources.filter((source) => source !== image) })),
+                      })}><Trash2 size={15} aria-hidden="true" /><span className="visually-hidden">Quitar {label}</span></button>
                     </span>
                   </li>
                 )
@@ -527,6 +598,42 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
                 </li>
               )}
             </ul>
+          </fieldset>
+
+          <fieldset className="admin-colors">
+            <legend>Colores disponibles</legend>
+            <p className="admin-gallery__help">Agrega cada color, selecciona las fotos que le corresponden y haz clic sobre la prenda en una foto para tomar su muestra.</p>
+            {draft.colors.map((color, colorIndex) => (
+              <section className="admin-color" key={colorIndex} aria-label={`Color ${colorIndex + 1}`}>
+                <div className="admin-color__heading">
+                  <label className="admin-field"><span>Nombre del color</span><input required={Boolean(color.name || color.imageSources.length || color.hex !== '#ffffff')} maxLength={32} value={color.name} onChange={(event) => setDraft((current) => current ? {
+                    ...current,
+                    colors: current.colors.map((entry, index) => index === colorIndex ? { ...entry, name: event.target.value } : entry),
+                  } : current)} placeholder="Ej. Negro" /></label>
+                  <span className="admin-color__sample" style={{ backgroundColor: color.hex }} aria-label={`Muestra ${color.hex}`} />
+                  <button className="admin-gallery__button" type="button" onClick={() => setDraft((current) => current ? { ...current, colors: current.colors.filter((_, index) => index !== colorIndex) } : current)} aria-label={`Quitar color ${color.name || colorIndex + 1}`} title="Quitar color"><Trash2 size={15} /></button>
+                </div>
+                <div className="admin-color__images">
+                  {draft.images.map((image, imageIndex) => (
+                    <div className="admin-color__image" key={`${imageIndex}-${image.slice(-24)}`}>
+                      <button type="button" className="admin-color__sample-image" onClick={(event) => sampleColor(event, colorIndex, image)} title="Haz clic sobre la prenda para elegirla y tomar una muestra">
+                        <img src={image} alt={`Tomar muestra desde imagen ${imageIndex + 1}`} width="112" height="128" />
+                      </button>
+                      <label><input type="checkbox" checked={color.imageSources.includes(image)} onChange={(event) => setDraft((current) => current ? {
+                        ...current,
+                        colors: current.colors.map((entry, index) => index === colorIndex ? {
+                          ...entry,
+                          imageSources: event.target.checked
+                            ? [...entry.imageSources, image]
+                            : entry.imageSources.filter((source) => source !== image),
+                        } : entry),
+                      } : current)} /> Usar foto {imageIndex + 1}</label>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ))}
+            {draft.colors.length < 12 && <button className="admin-cancel-button" type="button" onClick={() => setDraft((current) => current ? { ...current, colors: [...current.colors, { name: '', hex: '#ffffff', imageSources: [] }] } : current)}><Plus size={15} aria-hidden="true" /> Añadir color</button>}
           </fieldset>
 
           {formError && <p className="admin-form-error" role="alert">{formError}</p>}

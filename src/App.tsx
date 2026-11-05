@@ -137,8 +137,8 @@ function ShippingCalculator({ productId, size, priceArs, shipping, currency, usd
 
 function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, selectedView, currentUser, shipping, currency, usdArsRate, onBack, onSelectRelated, onSizeChange, onViewChange, onAddToCart, onRequestLogin, onOpenContact }: ProductDetailProps) {
   const [isGalleryHovering, setIsGalleryHovering] = useState(false)
+  const [selectedColorIndex, setSelectedColorIndex] = useState(0)
   const [reviewResult, setReviewResult] = useState<{ slug: string; reviews: ProductReview[] } | null>(null)
-  const [zoomOrigin, setZoomOrigin] = useState<string | null>(null)
   const [reviewRating, setReviewRating] = useState(5)
   const [reviewComment, setReviewComment] = useState('')
   const [reviewMessage, setReviewMessage] = useState('')
@@ -148,7 +148,10 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
   const [isSubmittingRestock, setIsSubmittingRestock] = useState(false)
 
   const baseViews = product.gallery && product.gallery.length > 0 ? [...product.gallery] : [{ src: getProductImage(product), alt: product.alt, label: 'Vista principal' }]
-  const views = [...baseViews]
+  const availableColors = product.colors?.filter((color) => color.imageIndexes.some((index) => index >= 0 && index < baseViews.length)) ?? []
+  const selectedColor = availableColors[selectedColorIndex] ?? availableColors[0]
+  const colorViews = selectedColor?.imageIndexes.map((index) => baseViews[index]).filter((view) => view !== undefined) ?? []
+  const views = [...(colorViews.length ? colorViews : baseViews)]
 
   while (views.length < 3) {
     const source = baseViews[views.length % baseViews.length]
@@ -244,22 +247,11 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
       <div className="product-detail__layout">
         <div className="product-detail__gallery">
           <div
-            className={`product-detail__main-image${zoomOrigin ? ' is-zooming' : ''}`}
+            className="product-detail__main-image"
             onMouseEnter={() => setIsGalleryHovering(true)}
-            onMouseLeave={() => { setIsGalleryHovering(false); setZoomOrigin(null) }}
-            onMouseMove={(event) => {
-              if (!zoomOrigin) return
-              const box = event.currentTarget.getBoundingClientRect()
-              setZoomOrigin(`${((event.clientX - box.left) / box.width) * 100}% ${((event.clientY - box.top) / box.height) * 100}%`)
-            }}
-            onClick={(event) => {
-              if (zoomOrigin) { setZoomOrigin(null); return }
-              const box = event.currentTarget.getBoundingClientRect()
-              setZoomOrigin(`${((event.clientX - box.left) / box.width) * 100}% ${((event.clientY - box.top) / box.height) * 100}%`)
-            }}
-            title="Clic para ampliar"
+            onMouseLeave={() => setIsGalleryHovering(false)}
           >
-            <img key={currentView?.src ?? getProductImage(product)} src={currentView?.src ?? getProductImage(product)} alt={currentView?.alt ?? product.alt} width="900" height="1225" fetchPriority="high" style={zoomOrigin ? { transformOrigin: zoomOrigin } : undefined} />
+            <img key={currentView?.src ?? getProductImage(product)} src={currentView?.src ?? getProductImage(product)} alt={currentView?.alt ?? product.alt} width="900" height="1225" fetchPriority="high" />
           </div>
           <div className="product-detail__views" role="group" aria-label={`Vistas de ${product.name}`}>
             {views.map((view, index) => <button className={selectedView === index ? 'is-active' : ''} key={`${view.label}-${index}`} type="button" onClick={() => onViewChange(index)} aria-label={`Ver ${view.label}`} aria-pressed={selectedView === index}><img src={view.src} alt="" width="120" height="120" loading="lazy" /></button>)}
@@ -272,6 +264,25 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
           <p className="product-detail__tax-note">IVA incluido</p>
           <p className="product-detail__description">{product.description}</p>
           <div className="product-detail__story"><h2>Sobre el diseño</h2><p>{product.designDescription}</p></div>
+          {!product.isGiftCard && selectedColor && (
+            <div className="product-detail__colors">
+              <span>Color: <strong>{selectedColor.name}</strong></span>
+              <div role="group" aria-label="Colores disponibles">
+                {availableColors.map((color, index) => (
+                  <button
+                    className={index === selectedColorIndex ? 'is-active' : ''}
+                    key={`${color.name}-${color.hex}`}
+                    type="button"
+                    onClick={() => { setSelectedColorIndex(index); onViewChange(0) }}
+                    aria-label={`Ver color ${color.name}`}
+                    aria-pressed={index === selectedColorIndex}
+                    title={color.name}
+                    style={{ backgroundColor: color.hex }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
           {product.isGiftCard ? <p className="product-detail__gift-note">Sin vencimiento. El código llega por correo apenas se confirma el pago y se canjea en el checkout, por partes si quieres.</p> : <dl className="product-detail__specs"><div><dt>Composición</dt><dd>{product.composition}</dd></div><div><dt>Tallas disponibles</dt><dd>XS–3XL</dd></div><div><dt>Estampado</dt><dd>Frente y espalda</dd></div></dl>}
           {product.isGiftCard ? (
             <div className="product-detail__size">
@@ -1017,7 +1028,7 @@ function App() {
 
       <header className="site-header">
         <div className="header-inner">
-          <a className="brand" href={selectedProductSlug || isAdminPage || isAccountPage ? '/' : '#inicio'} aria-label="UnFocus, inicio"><span className="brand__logo-wrap"><span className="brand__reveal" aria-hidden="true"><span className="brand__highlight"><img className="brand__logo brand__logo--white" src={unfocusLogoWhite} alt="" width="1610" height="395" /></span></span><img className="brand__logo" src={unfocusLogo} alt="UnFocus" width="4724" height="1157" /></span></a>
+          <a className="brand" href="/" onClick={(event) => { event.preventDefault(); navigateToStore() }} aria-label="UnFocus, inicio"><span className="brand__logo-wrap"><span className="brand__reveal" aria-hidden="true"><span className="brand__highlight"><img className="brand__logo brand__logo--white" src={unfocusLogoWhite} alt="" width="1610" height="395" /></span></span><img className="brand__logo" src={unfocusLogo} alt="UnFocus" width="4724" height="1157" /></span></a>
           <nav className="main-nav" aria-label="Navegación principal"><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#coleccion' : '#coleccion'}>Tienda</a><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#historia' : '#historia'}>Nuestra mirada</a><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#newsletter' : '#newsletter'}>Diario</a><a href="?contacto=1" onClick={(event) => { event.preventDefault(); navigateToContact() }}>Contacto</a></nav>
           <div className="header-actions">
             <div className={`search-box${isSearchOpen ? ' is-open' : ''}`}>
@@ -1089,6 +1100,7 @@ function App() {
           <AccountPanel user={currentUser} authLoading={authLoading} currency={displayCurrency} usdArsRate={usdArsRate} onAuthenticated={handleAuthenticated} onLogout={handleLogout} onOpenProduct={navigateToProduct} onOpenAdmin={navigateToAdmin} onToggleFavorite={toggleFavorite} />
         ) : legalPage ? <LegalPages page={legalPage} store={storeConfig?.store ?? null} onBack={navigateToStore} onOpenPage={navigateToLegal} onOpenContact={navigateToContact} /> : isContactPage ? <ContactPage onBack={navigateToStore} /> : activeProduct ? (
           <ProductDetail
+            key={activeProduct.id}
             product={activeProduct}
             relatedProducts={relatedProducts}
             relatedTitle={hasRecentlyViewed ? 'Vistos recientemente' : 'También puede interesarte'}
@@ -1202,7 +1214,7 @@ function App() {
       </main>
 
       <footer className="site-footer">
-        <a className="brand brand--footer" href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/' : '#inicio'} aria-label="UnFocus, inicio"><span className="brand__logo-wrap"><span className="brand__reveal" aria-hidden="true"><span className="brand__highlight"><img className="brand__logo brand__logo--white" src={unfocusLogoWhite} alt="" width="1610" height="395" /></span></span><img className="brand__logo" src={unfocusLogo} alt="UnFocus" width="4724" height="1157" /></span></a><span>Seeking clarity. Embrace yourself.</span>
+        <a className="brand brand--footer" href="/" onClick={(event) => { event.preventDefault(); navigateToStore() }} aria-label="UnFocus, inicio"><span className="brand__logo-wrap"><span className="brand__reveal" aria-hidden="true"><span className="brand__highlight"><img className="brand__logo brand__logo--white" src={unfocusLogoWhite} alt="" width="1610" height="395" /></span></span><img className="brand__logo" src={unfocusLogo} alt="UnFocus" width="4724" height="1157" /></span></a><span>Seeking clarity. Embrace yourself.</span>
         <div className="footer-links"><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#coleccion' : '#coleccion'}>Tienda</a><a href={selectedProductSlug || isAdminPage || isAccountPage || isContactPage ? '/#historia' : '#historia'}>Nuestra mirada</a><a href="?contacto=1" onClick={(event) => { event.preventDefault(); navigateToContact() }}>Contacto</a></div>
         <nav className="footer-legal" aria-label="Información legal">{legalPageKeys.map((key) => <a key={key} href={`?legal=${key}`} onClick={(event) => { event.preventDefault(); navigateToLegal(key) }}>{legalPageTitles[key]}</a>)}</nav>
         {storeConfig?.store.legalName && <p className="footer-store">{storeConfig.store.legalName}{storeConfig.store.taxId ? ` · CUIT ${storeConfig.store.taxId}` : '}{storeConfig.store.address ? ` · ${storeConfig.store.address}` : '}</p>}<span className="footer-copyright">© 2026 UnFocus</span>

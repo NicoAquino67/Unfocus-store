@@ -251,6 +251,7 @@ const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().m
   if (!columns.has('production_cost_ars')) database.exec('ALTER TABLE products ADD COLUMN production_cost_ars INTEGER NOT NULL DEFAULT 0')
   if (!columns.has('tax_percent')) database.exec('ALTER TABLE products ADD COLUMN tax_percent REAL NOT NULL DEFAULT 0')
   if (!columns.has('profit_percent')) database.exec('ALTER TABLE products ADD COLUMN profit_percent REAL NOT NULL DEFAULT 0')
+  if (!columns.has('colors_json')) database.exec("ALTER TABLE products ADD COLUMN colors_json TEXT NOT NULL DEFAULT '[]'")
   database.exec(`
     CREATE TABLE IF NOT EXISTS product_reviews (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -521,6 +522,7 @@ const productFromRow = (row) => ({
     { src: row.back_image, alt: row.back_alt, label: 'Espalda' },
     ...parseExtraImages(row.extra_images).map((image, index) => ({ src: image.src, alt: image.alt, label: `Vista ${index + 3}` })),
   ],
+  colors: JSON.parse(row.colors_json || '[]'),
   badge: row.badge,
   createdAt: row.created_at,
   sold: Number(row.sold ?? 0),
@@ -899,6 +901,7 @@ const validateProduct = (body) => {
   const discountType = ['percent', 'fixed'].includes(body.discountType) ? body.discountType : 'none'
   const discountValue = discountType === 'none' ? 0 : Number(body.discountValue)
   const gallery = body.gallery
+  const colors = body.colors ?? []
   if (name.length < 2 || name.length > 80) throw new Error('El nombre debe tener entre 2 y 80 caracteres.')
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) throw new Error('El enlace del producto no es válido.')
   if (!Number.isSafeInteger(price) || price < 1) throw new Error('El precio debe ser un importe entero en pesos argentinos.')
@@ -913,7 +916,20 @@ const validateProduct = (body) => {
   if (!description || description.length > 500) throw new Error('La descripción debe tener hasta 500 caracteres.')
   if (!designDescription || designDescription.length > 500) throw new Error('La descripción del diseño debe tener hasta 500 caracteres.')
   if (!Array.isArray(gallery) || gallery.length < minimumProductImages || gallery.length > maximumProductImages) throw new Error(`Sube entre ${minimumProductImages} y ${maximumProductImages} imágenes del producto.`)
-  return { name, slug, price, garmentCostArs, logisticsCostArs, productionCostArs, taxPercent, profitPercent, discountType, discountValue, stock, stockBySize, composition, description, designDescription, category, gallery }
+  if (!Array.isArray(colors) || colors.length > 12) throw new Error('Configura hasta 12 colores por producto.')
+  const normalizedColors = colors.map((color) => {
+    const colorName = typeof color?.name === 'string' ? color.name.trim() : ''
+    const hex = typeof color?.hex === 'string' ? color.hex : ''
+    const imageIndexes = color?.imageIndexes
+    if (!colorName || colorName.length > 32) throw new Error('Cada color debe tener un nombre de hasta 32 caracteres.')
+    if (!/^#[0-9a-f]{6}$/i.test(hex)) throw new Error(`La muestra del color ${colorName} no es válida.`)
+    if (!Array.isArray(imageIndexes) || imageIndexes.length < 1 || imageIndexes.some((index) => !Number.isSafeInteger(index) || index < 0 || index >= gallery.length)) {
+      throw new Error(`Selecciona al menos una imagen válida para el color ${colorName}.`)
+    }
+    return { name: colorName, hex: hex.toUpperCase(), imageIndexes: [...new Set(imageIndexes)] }
+  })
+  if (new Set(normalizedColors.map((color) => color.name.toLocaleLowerCase())).size !== normalizedColors.length) throw new Error('Los nombres de color no se pueden repetir.')
+  return { name, slug, price, garmentCostArs, logisticsCostArs, productionCostArs, taxPercent, profitPercent, discountType, discountValue, stock, stockBySize, composition, description, designDescription, category, gallery, colors: normalizedColors }
 }
 
 const requireProductBody = async (body) => {
@@ -937,18 +953,18 @@ const requireProductBody = async (body) => {
 }
 
 const insertProduct = database.prepare(`
-  INSERT INTO products (slug, name, category, price_ars, garment_cost_ars, logistics_cost_ars, production_cost_ars, tax_percent, profit_percent, stock, stock_by_size, composition, features_json, description, design_description, front_image, front_alt, back_image, back_alt, badge, extra_images, discount_type, discount_value)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO products (slug, name, category, price_ars, garment_cost_ars, logistics_cost_ars, production_cost_ars, tax_percent, profit_percent, stock, stock_by_size, composition, features_json, description, design_description, front_image, front_alt, back_image, back_alt, badge, extra_images, discount_type, discount_value, colors_json)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `)
 const updateProduct = database.prepare(`
-  UPDATE products SET slug = ?, name = ?, category = ?, price_ars = ?, garment_cost_ars = ?, logistics_cost_ars = ?, production_cost_ars = ?, tax_percent = ?, profit_percent = ?, stock = ?, stock_by_size = ?, composition = ?, features_json = ?, description = ?, design_description = ?, front_image = ?, front_alt = ?, back_image = ?, back_alt = ?, badge = ?, extra_images = ?, discount_type = ?, discount_value = ?, updated_at = CURRENT_TIMESTAMP
+  UPDATE products SET slug = ?, name = ?, category = ?, price_ars = ?, garment_cost_ars = ?, logistics_cost_ars = ?, production_cost_ars = ?, tax_percent = ?, profit_percent = ?, stock = ?, stock_by_size = ?, composition = ?, features_json = ?, description = ?, design_description = ?, front_image = ?, front_alt = ?, back_image = ?, back_alt = ?, badge = ?, extra_images = ?, discount_type = ?, discount_value = ?, colors_json = ?, updated_at = CURRENT_TIMESTAMP
   WHERE id = ?
 `)
 
 app.post('/api/admin/products', requireAdmin, async (request, response) => {
   try {
     const product = await requireProductBody(request.body)
-    const result = insertProduct.run(product.slug, product.name, product.category, product.price, product.garmentCostArs, product.logisticsCostArs, product.productionCostArs, product.taxPercent, product.profitPercent, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue)
+    const result = insertProduct.run(product.slug, product.name, product.category, product.price, product.garmentCostArs, product.logisticsCostArs, product.productionCostArs, product.taxPercent, product.profitPercent, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue, JSON.stringify(product.colors))
     response.status(201).json({ product: productFromRow(selectProductById.get(Number(result.lastInsertRowid))) })
   } catch (error) {
     response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un producto con ese enlace.' : error.message })
@@ -960,7 +976,7 @@ app.put('/api/admin/products/:id', requireAdmin, async (request, response) => {
   if (!Number.isSafeInteger(id) || !selectProductById.get(id)) return response.status(404).json({ error: 'Producto no encontrado.' })
   try {
     const product = await requireProductBody(request.body)
-    updateProduct.run(product.slug, product.name, product.category, product.price, product.garmentCostArs, product.logisticsCostArs, product.productionCostArs, product.taxPercent, product.profitPercent, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue, id)
+    updateProduct.run(product.slug, product.name, product.category, product.price, product.garmentCostArs, product.logisticsCostArs, product.productionCostArs, product.taxPercent, product.profitPercent, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue, JSON.stringify(product.colors), id)
     await notifyRestockedCustomers(id, product.name, product.stockBySize || {})
     response.json({ product: productFromRow(selectProductById.get(id)) })
   } catch (error) {

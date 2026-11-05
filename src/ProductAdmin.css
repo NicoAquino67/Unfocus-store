@@ -152,6 +152,20 @@
 .admin-gallery__item--add { align-self: stretch; }
 .admin-gallery__add { display: grid; place-content: center; justify-items: center; gap: 8px; min-height: 140px; height: 100%; border: 2px dashed var(--line); color: var(--brand-blue-deep); font-size: 12px; font-weight: 600; cursor: pointer; text-align: center; }
 .admin-gallery__add:hover { background: var(--paper); }
+.admin-colors { display: grid; gap: 14px; margin: 16px 0 0; padding: 16px; border: 1px solid var(--line); background: #fff; min-width: 0; }
+.admin-colors legend { padding: 0 6px; color: var(--ink); font-size: 13px; font-weight: 600; }
+.admin-colors > .admin-gallery__help { margin-bottom: 0; }
+.admin-color { display: grid; gap: 12px; padding: 14px 0; border-top: 1px solid var(--line); }
+.admin-color__heading { display: flex; align-items: end; gap: 10px; }
+.admin-color__heading .admin-field { flex: 1; }
+.admin-color__sample { width: 34px; height: 34px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 50%; }
+.admin-color__images { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 12px; }
+.admin-color__image { display: grid; gap: 6px; }
+.admin-color__sample-image { width: 100%; padding: 0; border: 1px solid var(--line); background: var(--paper); cursor: crosshair; }
+.admin-color__sample-image:focus-visible { outline: 3px solid var(--brand-blue-deep); outline-offset: 2px; }
+.admin-color__sample-image img { display: block; width: 100%; aspect-ratio: 4 / 5; object-fit: contain; }
+.admin-color__image label { display: flex; align-items: center; gap: 5px; color: var(--ink-soft); font-size: 10px; }
+.admin-color__image input { accent-color: var(--brand-blue-deep); }
 .admin-reports { margin: 24px 0; }
 .admin-reports__heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
 .admin-reports__tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; margin-top: 20px; }

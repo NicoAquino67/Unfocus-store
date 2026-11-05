@@ -1,6 +1,12 @@
 export type Category = 'Camisetas' | 'Regalos'
 export type DisplayCurrency = 'ARS' | 'USD'
 
+export type ProductColor = {
+  name: string
+  hex: string
+  imageIndexes: number[]
+}
+
 export type Product = {
   id: number
   slug: string
@@ -22,6 +28,7 @@ export type Product = {
   description: string
   designDescription: string
   gallery?: { src: string; alt: string; label: string }[]
+  colors?: ProductColor[]
   badge?: string
   stockBySize?: Record<string, number>
   createdAt?: string

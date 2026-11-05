@@ -36,9 +36,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 img { display: block; max-width: 100%; }
 #root { min-height: 100vh; }
 
-.product-detail__main-image { overflow: hidden; cursor: zoom-in; }
-.product-detail__main-image.is-zooming { cursor: zoom-out; }
-.product-detail__main-image.is-zooming img { transform: scale(2.2); transition: transform-origin 0s; animation: none; }
 
 .checkout-form__guest { display: grid; gap: 10px; padding: 12px; border: 1px solid rgba(0,0,0,.12); }
 .checkout-form__guest p { margin: 0; font-size: .85rem; }
