@@ -9,7 +9,7 @@ import { MercadoPagoConfig, Preference } from 'mercadopago'
 import nodemailer from 'nodemailer'
 import { CorreoArgentinoError, buildOrderPayload, createCorreoArgentinoClient, readCorreoArgentinoConfig } from './correoArgentino.mjs'
 import { MiCorreoError, buildDimensions, buildImportPayload, createMiCorreoClient, readMiCorreoConfig } from './miCorreo.mjs'
-import { buildRobotsTxt, buildSitemapXml, injectImagePreload, injectProductMeta } from './seo.mjs'
+import { buildLlmsTxt, buildMarkdownPage, buildMcpServerCard, buildHomepageJsonLd, buildRobotsTxt, buildSitemapXml, injectAgentContent, injectImagePreload, injectProductMeta, injectSiteMeta, renderAgentContent } from './seo.mjs'
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url))
 const projectDirectory = path.resolve(serverDirectory, '..')
@@ -21,6 +21,9 @@ const mercadoPagoClient = mercadoPagoAccessToken ? new MercadoPagoConfig({ acces
 const mercadoPagoEnvironment = process.env.MP_ENVIRONMENT?.trim().toLowerCase() || (isProduction ? 'production' : 'unconfigured')
 const mercadoPagoIsTestMode = mercadoPagoEnvironment === 'test'
 const publicBaseUrl = process.env.PUBLIC_BASE_URL || (isProduction ? 'https://localhost' : 'http://localhost:5173')
+const configuredSameAs = (process.env.PUBLIC_SAME_AS || '').split(',').map((url) => url.trim()).filter(Boolean)
+const publicSameAs = configuredSameAs.length ? configuredSameAs : ['https://www.instagram.com/unfocus.shop/']
+if (publicSameAs.some((url) => !/^https:\/\/\S+$/i.test(url))) throw new Error('PUBLIC_SAME_AS debe contener URLs HTTPS separadas por comas.')
 const persistentDataDirectory = isProduction && process.env.HOME ? path.join(process.env.HOME, 'unfocus-data') : projectDirectory
 const resolveStoragePath = (configuredPath, defaultPath) => {
   const storagePath = configuredPath || defaultPath
@@ -28,6 +31,7 @@ const resolveStoragePath = (configuredPath, defaultPath) => {
   if (isProduction && !process.env.HOME) throw new Error('HOME es obligatorio en producción para guardar los datos fuera del directorio de despliegue.')
   return path.resolve(persistentDataDirectory, storagePath)
 }
+
 const databasePath = resolveStoragePath(process.env.DATABASE_PATH, path.join('data', 'unfocus.sqlite'))
 const uploadDirectory = resolveStoragePath(process.env.UPLOAD_DIR, 'uploads')
 const identDirectory = process.env.IDENT_DIR ? path.resolve(process.env.IDENT_DIR) : path.join(projectDirectory, 'ident')
@@ -632,17 +636,74 @@ app.use(compression())
 app.use(express.json({ limit: '6mb', inflate: false }))
 app.use((request, response, next) => {
   const origin = request.get('origin')
-  const isAllowedOrigin = !origin || allowedOrigins.has(origin) || (isProduction ? origin.endsWith('.unfocus.shop') : ['localhost', '127.0.0.1'].includes(new URL(origin || 'http://localhost').hostname))
+  const isMcpRequest = request.path === '/mcp'
+  const isAllowedOrigin = !origin || isMcpRequest || allowedOrigins.has(origin) || (isProduction ? origin.endsWith('.unfocus.shop') : ['localhost', '127.0.0.1'].includes(new URL(origin || 'http://localhost').hostname))
   if (origin && !isAllowedOrigin) return response.status(403).json({ error: 'Origen no permitido.' })
   if (origin) {
-    response.setHeader('Access-Control-Allow-Origin', origin)
-    response.setHeader('Access-Control-Allow-Credentials', 'true')
-    response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
-    response.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.setHeader('Access-Control-Allow-Origin', isMcpRequest ? '*' : origin)
+    if (!isMcpRequest) response.setHeader('Access-Control-Allow-Credentials', 'true')
+    response.setHeader('Access-Control-Allow-Methods', isMcpRequest ? 'GET,POST,OPTIONS' : 'GET,POST,PUT,DELETE,OPTIONS')
+    response.setHeader('Access-Control-Allow-Headers', isMcpRequest ? 'Content-Type,Accept,MCP-Protocol-Version' : 'Content-Type,Authorization')
   }
   if (request.method === 'OPTIONS') return response.sendStatus(204)
   next()
 })
+
+const mcpTools = [{
+  name: 'search_products',
+  description: 'Busca prendas y tarjetas de regalo del catálogo público de UnFocus por nombre, categoría o descripción.',
+  inputSchema: {
+    type: 'object',
+    properties: { query: { type: 'string', description: 'Texto de búsqueda opcional.' } },
+    required: [],
+    additionalProperties: false,
+  },
+}]
+
+app.post('/mcp', (request, response) => applyRateLimit(request, response, () => {
+  const message = request.body
+  if (!message || typeof message !== 'object' || Array.isArray(message) || message.jsonrpc !== '2.0' || typeof message.method !== 'string') {
+    return response.status(400).json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Solicitud JSON-RPC inválida.' } })
+  }
+  const hasId = Object.prototype.hasOwnProperty.call(message, 'id')
+  if (!hasId) return response.sendStatus(202)
+  const reply = (result) => response.json({ jsonrpc: '2.0', id: message.id, result })
+  const fail = (code, errorMessage) => response.json({ jsonrpc: '2.0', id: message.id, error: { code, message: errorMessage } })
+  if (message.method === 'initialize') {
+    const supportedVersion = ['2025-03-26', '2025-11-25'].includes(message.params?.protocolVersion)
+      ? message.params.protocolVersion
+      : '2025-11-25'
+    response.setHeader('MCP-Protocol-Version', supportedVersion)
+    return reply({
+      protocolVersion: supportedVersion,
+      capabilities: { tools: { listChanged: false } },
+      serverInfo: { name: 'unfocus-store', version: '1.0.0' },
+    })
+  }
+  if (message.method === 'ping') return reply({})
+  if (message.method === 'tools/list') return reply({ tools: mcpTools })
+  if (message.method === 'tools/call') {
+    if (message.params?.name !== 'search_products') return fail(-32602, 'Herramienta desconocida.')
+    const query = message.params?.arguments?.query
+    if (query !== undefined && (typeof query !== 'string' || query.length > 120)) return fail(-32602, 'El texto de búsqueda no es válido.')
+    const normalizedQuery = String(query ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es').trim()
+    const seoBaseUrl = publicBaseUrl.replace(/\/$/, '')
+    const products = allProducts.all().map(productFromRow)
+      .filter((product) => !normalizedQuery || `${product.name} ${product.category} ${product.description}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es').includes(normalizedQuery))
+      .slice(0, 20)
+      .map((product) => ({
+        name: product.name,
+        url: `${seoBaseUrl}/?producto=${encodeURIComponent(product.slug)}`,
+        category: product.category,
+        priceArs: product.salePrice ?? product.price,
+        description: product.description,
+      }))
+    return reply({ content: [{ type: 'text', text: JSON.stringify(products) }], structuredContent: { products }, isError: false })
+  }
+  return fail(-32601, 'Método no encontrado.')
+}, 60, 60_000))
+app.get('/mcp', (_request, response) => response.setHeader('Allow', 'POST').status(405).json({ error: 'El servidor MCP solo acepta solicitudes POST.' }))
+
 app.use('/uploads', express.static(uploadDirectory, { maxAge: '1y', immutable: true, fallthrough: false }))
 app.use('/ident', express.static(identDirectory, { maxAge: '1d' }))
 
@@ -1976,8 +2037,19 @@ if (isProduction) {
   const indexHtmlPath = path.join(projectDirectory, 'dist', 'index.html')
   const seoBaseUrl = publicBaseUrl.replace(/\/$/, '')
   const legalPageSlugs = ['terminos', 'privacidad', 'cambios', 'arrepentimiento', 'defensa', 'baja', 'faq']
+  const legalPageTitles = {
+    terminos: 'Términos y condiciones',
+    privacidad: 'Política de privacidad',
+    cambios: 'Cambios y devoluciones',
+    arrepentimiento: 'Botón de arrepentimiento',
+    defensa: 'Defensa del consumidor',
+    baja: 'Botón de baja',
+    faq: 'Preguntas y respuestas',
+  }
   app.get('/robots.txt', (_request, response) => response.type('text/plain').send(buildRobotsTxt(seoBaseUrl)))
   app.get('/sitemap.xml', (_request, response) => response.type('application/xml').send(buildSitemapXml(seoBaseUrl, allProducts.all().map(productFromRow), legalPageSlugs)))
+  app.get('/llms.txt', (_request, response) => response.type('text/plain').send(buildLlmsTxt(seoBaseUrl, allProducts.all().map(productFromRow))))
+  app.get('/.well-known/mcp/server-card.json', (_request, response) => response.json(buildMcpServerCard(seoBaseUrl)))
   app.use(express.static(path.join(projectDirectory, 'dist'), {
     index: false,
     setHeaders: (response, filePath) => {
@@ -1989,13 +2061,65 @@ if (isProduction) {
     },
   }))
   app.get(/^(?!\/api\/).*/, async (request, response) => {
+    const products = allProducts.all().map(productFromRow)
     const slug = typeof request.query.producto === 'string' ? request.query.producto : ''
     const row = slug ? selectProductBySlug.get(slug) : null
+    const product = row ? productFromRow(row) : null
+    const legalPage = typeof request.query.legal === 'string' ? request.query.legal : request.query.contacto === '1' ? 'contact' : null
+    const isInvalidPage = request.path !== '/'
+      || (request.query.producto !== undefined && (!slug || !product))
+      || (request.query.legal !== undefined && (!legalPage || !legalPageSlugs.includes(legalPage)))
+      || (request.query.contacto !== undefined && request.query.contacto !== '1')
+    const requestsMarkdown = (request.get('accept') || '').split(',').some((entry) => {
+      const [mediaType, ...parameters] = entry.trim().split(';')
+      return mediaType.toLowerCase() === 'text/markdown' && !parameters.some((parameter) => /^q=0(?:\.0*)?$/i.test(parameter.trim()))
+    })
     const html = await readFile(indexHtmlPath, 'utf8')
     response.setHeader('Cache-Control', 'no-cache')
-    if (row) return response.type('html').send(injectProductMeta(html, seoBaseUrl, productFromRow(row)))
-    const hero = allProducts.all().map(productFromRow).find((product) => !product.isGiftCard && product.gallery[1]?.src)
-    response.type('html').send(hero ? injectImagePreload(html, seoBaseUrl, hero.gallery[1].src) : html)
+    const publicContact = publicStoreConfig().store
+    const linkHeader = `<${seoBaseUrl}/llms.txt>; rel="alternate"; type="text/plain"; title="llms.txt", <${seoBaseUrl}/>; rel="alternate"; type="text/markdown"; title="Markdown"`
+    response.setHeader('Link', linkHeader)
+    if (requestsMarkdown) {
+      response.status(isInvalidPage ? 404 : 200).type('text/markdown')
+      if (isInvalidPage) return response.send('# Página no encontrada\n')
+      return response.send(buildMarkdownPage(seoBaseUrl, { product, products, contact: publicContact, legalPage }))
+    }
+    if (isInvalidPage) {
+      const notFound = injectAgentContent(html, '<main id="agent-content"><h1>Página no encontrada</h1><p>No encontramos la página que buscas.</p><p><a href="/">Volver al inicio</a></p></main>')
+      response.status(404).setHeader('X-Robots-Tag', 'noindex')
+      const notFoundHtml = injectSiteMeta(notFound, seoBaseUrl, {
+        title: 'Página no encontrada | UnFocus',
+        description: 'La página solicitada no existe.',
+        canonical: '',
+      }).replace(/<script type="module"[^>]*><\/script>\s*/g, '')
+      return response.type('html').send(notFoundHtml)
+    }
+    const agentContent = renderAgentContent({ products, product, legalPage, contact: publicContact })
+    let pageHtml = injectAgentContent(html, agentContent)
+    if (product) {
+      pageHtml = injectProductMeta(pageHtml, seoBaseUrl, product)
+    } else if (legalPage === 'contact' || legalPage) {
+      const title = legalPage === 'contact' ? 'Contacto | UnFocus' : `${legalPageTitles[legalPage]} | UnFocus`
+      const canonical = legalPage === 'contact' ? `${seoBaseUrl}/?contacto=1` : `${seoBaseUrl}/?legal=${encodeURIComponent(legalPage)}`
+      pageHtml = injectSiteMeta(pageHtml, seoBaseUrl, {
+        title,
+        description: legalPage === 'contact' ? 'Contacta con UnFocus Mall para consultas sobre productos y pedidos.' : `${legalPageTitles[legalPage]} de UnFocus Mall.`,
+        canonical,
+        jsonLd: {
+          '@context': 'https://schema.org',
+          '@type': 'WebPage',
+          name: title,
+          url: canonical,
+          inLanguage: 'es-AR',
+        },
+      })
+    } else {
+      const jsonLd = buildHomepageJsonLd(seoBaseUrl, { products, store: publicContact, sameAs: publicSameAs })
+      const hero = products.find((item) => !item.isGiftCard && item.gallery[1]?.src)
+      pageHtml = injectSiteMeta(pageHtml, seoBaseUrl, { jsonLd })
+      if (hero) pageHtml = injectImagePreload(pageHtml, seoBaseUrl, hero.gallery[1].src)
+    }
+    response.type('html').send(pageHtml)
   })
 }
 

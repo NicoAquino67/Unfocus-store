@@ -528,6 +528,21 @@ const readRecentlyViewed = (): string[] => {
 
 const normalizeSearchText = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es')
 
+type BrowserAgentToolContext = {
+  registerTool: (tool: {
+    name: string
+    description: string
+    inputSchema: { type: 'object'; properties: { query: { type: 'string'; description: string } }; required: string[]; additionalProperties: false }
+    execute: (input: { query?: string }) => Promise<{ content: { type: 'text'; text: string }[] }>
+  }) => void | Promise<void>
+}
+
+declare global {
+  interface Navigator {
+    modelContext?: BrowserAgentToolContext
+  }
+}
+
 function App() {
   const [products, setProducts] = useState<Product[]>(() => initialProducts.map(normalizeProductFacets))
   const showcaseProducts = products.filter((product) => !product.isGiftCard && getProductImage(product, 1))
@@ -581,6 +596,32 @@ function App() {
     if (paymentStatus === 'failure') return 'No se pudo completar el pago. Puedes intentarlo nuevamente desde tu cuenta.'
     return ''
   })
+
+  useEffect(() => {
+    const modelContext = navigator.modelContext
+    if (!modelContext) return
+    const registration = modelContext.registerTool({
+      name: 'search_unfocus_products',
+      description: 'Busca prendas y tarjetas de regalo disponibles en el catálogo público de UnFocus Mall.',
+      inputSchema: {
+        type: 'object',
+        properties: { query: { type: 'string', description: 'Texto para buscar por nombre, categoría o descripción.' } },
+        required: [],
+        additionalProperties: false,
+      },
+      execute: async ({ query = '' }) => {
+        const response = await fetch('/api/products')
+        if (!response.ok) throw new Error(`No se pudo consultar el catálogo (${response.status}).`)
+        const result = await response.json() as { products: Product[] }
+        const normalized = normalizeSearchText(query.trim())
+        const products = result.products.filter((product) => !normalized || normalizeSearchText(`${product.name} ${product.category} ${product.description}`).includes(normalized))
+          .slice(0, 20)
+          .map(({ name, slug, category, price, salePrice, description }) => ({ name, url: `${window.location.origin}/?producto=${encodeURIComponent(slug)}`, category, priceArs: salePrice ?? price, description }))
+        return { content: [{ type: 'text', text: JSON.stringify(products) }] }
+      },
+    })
+    if (registration instanceof Promise) void registration.catch((error: unknown) => console.error('No se pudo registrar la herramienta WebMCP de UnFocus.', error))
+  }, [])
 
   useEffect(() => {
     let isCurrent = true

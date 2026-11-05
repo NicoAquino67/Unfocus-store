@@ -87,6 +87,7 @@ Para habilitar pago online, completa en `.env`:
 
 - `MP_ACCESS_TOKEN`: token de acceso privado de Mercado Pago.
 - `PUBLIC_BASE_URL`: URL pública de la tienda, por ejemplo `https://unfocus.shop`.
+- `PUBLIC_SAME_AS`: URLs públicas oficiales de redes o directorios, separadas por comas; si queda vacía, se usa el perfil de Instagram de UnFocus (`@unfocus.shop`). Se publican en `sameAs` del JSON-LD.
 
 Cuando `MP_ACCESS_TOKEN` existe, el checkout crea una preferencia de pago (con el envío como ítem si tiene costo) y redirige a la pasarela. El webhook `POST /api/payments/webhook` actualiza el estado del pedido a `paid` cuando Mercado Pago lo confirme.
 
@@ -102,6 +103,14 @@ Cuando `MP_ACCESS_TOKEN` existe, el checkout crea una preferencia de pago (con e
 2. Build command: `npm install && npm run build`. Start command: `npm start`.
 3. Variables en el panel: `NODE_ENV=production`, `PUBLIC_BASE_URL=https://dev.unfocus.shop`, `MP_WEBHOOK_URL=https://dev.unfocus.shop/api/payments/webhook`, `MP_WEBHOOK_SECRET`, `MP_ACCESS_TOKEN` (credenciales de prueba), `ADMIN_EMAIL`, `ADMIN_PASSWORD`, SMTP y datos de la tienda.
 4. En producción, SQLite y las imágenes subidas se guardan automáticamente en `$HOME/unfocus-data/`, fuera de la versión desplegada. También se puede definir `DATABASE_PATH` y `UPLOAD_DIR` con paths absolutos a almacenamiento persistente. No crees una base MySQL para esta versión: el servidor usa SQLite (`node:sqlite`).
+
+### Descubrimiento por agentes
+
+- `robots.txt` publica `Content-Signal: search=yes, ai-train=no`.
+- Las páginas públicas se sirven con contenido HTML inicial, título, descripción, canonical y datos JSON-LD; las rutas desconocidas devuelven 404.
+- `/llms.txt` ofrece el índice del sitio y `/` negocia Markdown con `Accept: text/markdown`.
+- `/.well-known/mcp/server-card.json` anuncia el endpoint MCP de solo lectura `/mcp`, que expone `search_products`.
+- En navegadores compatibles, la tienda registra `search_unfocus_products` mediante WebMCP.
 
 ### Paquete Docker
 
