@@ -10,6 +10,7 @@ type AccountPanelProps = {
   authLoading: boolean
   currency: DisplayCurrency
   usdArsRate: number | null
+  orderToOpen: number | null
   onAuthenticated: (user: AccountUser) => void
   onLogout: () => Promise<void>
   onOpenProduct: (product: Product) => void
@@ -30,7 +31,7 @@ const formatOrderDate = (date: string) => {
   return Number.isNaN(parsedDate.getTime()) ? date : new Intl.DateTimeFormat('es-AR', { dateStyle: 'medium' }).format(parsedDate)
 }
 
-function AccountPanel({ user, authLoading, currency, usdArsRate, onAuthenticated, onLogout, onOpenProduct, onOpenAdmin, onToggleFavorite }: AccountPanelProps) {
+function AccountPanel({ user, authLoading, currency, usdArsRate, orderToOpen, onAuthenticated, onLogout, onOpenProduct, onOpenAdmin, onToggleFavorite }: AccountPanelProps) {
   const [isRegistering, setIsRegistering] = useState(false)
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -54,7 +55,7 @@ function AccountPanel({ user, authLoading, currency, usdArsRate, onAuthenticated
   const [isSavingAddress, setIsSavingAddress] = useState(false)
   const [addressError, setAddressError] = useState('')
   const [addressMessage, setAddressMessage] = useState('')
-  const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null)
+  const [selectedOrderId, setSelectedOrderId] = useState<number | null>(orderToOpen)
   const [summaryError, setSummaryError] = useState('')
 
   useEffect(() => {
@@ -68,6 +69,11 @@ function AccountPanel({ user, authLoading, currency, usdArsRate, onAuthenticated
       .catch((requestError: Error) => { if (isCurrent) setSummaryError(requestError.message) })
     return () => { isCurrent = false }
   }, [user])
+
+  useEffect(() => {
+    if (orderToOpen === null || selectedOrderId !== orderToOpen || !summary?.orders.some((order) => order.id === orderToOpen)) return
+    document.getElementById(`account-order-${orderToOpen}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [orderToOpen, selectedOrderId, summary])
 
   useEffect(() => {
     if (!user) return
@@ -277,7 +283,7 @@ function AccountPanel({ user, authLoading, currency, usdArsRate, onAuthenticated
         {summary?.orders.length ? <div className="account-orders">{summary.orders.map((order) => {
           const isOpen = selectedOrderId === order.id
           return (
-            <article className="account-order" key={order.id}>
+            <article className="account-order" id={`account-order-${order.id}`} key={order.id}>
               <div className="account-order__summary">
                 <div><strong>{order.reference}</strong><span>{formatOrderDate(order.createdAt)}</span></div>
                 <div><span className={`account-order__status account-order__status--${order.status}`}>{orderStatusLabel(order.status)}</span><strong>{formatPrice(order.totalArs, currency, usdArsRate)}</strong></div>

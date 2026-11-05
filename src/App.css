@@ -44,11 +44,13 @@
 .notification-center__heading span { display: grid; place-items: center; min-width: 19px; height: 19px; padding: 0 5px; border-radius: 50%; background: var(--paper); color: var(--brand-blue-deep); font-size: 9px; }
 .notification-center__list { display: grid; }
 .notification-center__item { display: grid; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line); }
-.notification-center__item > div p { margin: 0 0 3px; color: var(--brand-blue-deep); font-size: 8px; font-weight: 700; text-transform: uppercase; }
-.notification-center__item > div strong { color: var(--ink); font-size: 11px; }
-.notification-center__item > span { color: var(--ink-soft); font-size: 10px; line-height: 1.5; }
-.notification-center__item time { color: var(--muted); font-size: 8px; }
-.notification-center__item button { display: inline-flex; align-items: center; gap: 5px; justify-self: end; padding: 4px 0; border: 0; background: transparent; color: var(--brand-blue-deep); font: 600 9px var(--sans); cursor: pointer; }
+.notification-center__open { display: grid; width: 100%; gap: 6px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.notification-center__open:hover strong { text-decoration: underline; text-underline-offset: 2px; }
+.notification-center__open > div p { margin: 0 0 3px; color: var(--brand-blue-deep); font-size: 8px; font-weight: 700; text-transform: uppercase; }
+.notification-center__open > div strong { color: var(--ink); font-size: 11px; }
+.notification-center__open > span { color: var(--ink-soft); font-size: 10px; line-height: 1.5; }
+.notification-center__open time { color: var(--muted); font-size: 8px; }
+.notification-center__mark-read { display: inline-flex; align-items: center; gap: 5px; justify-self: end; padding: 4px 0; border: 0; background: transparent; color: var(--brand-blue-deep); font: 600 9px var(--sans); cursor: pointer; }
 .notification-center__empty { margin: 0; padding: 12px 0 2px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
 
 .hero { position: relative; isolation: isolate; min-height: 565px; display: flex; align-items: center; overflow: hidden; color: var(--ink); background: var(--paper); }

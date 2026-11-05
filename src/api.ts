@@ -88,6 +88,7 @@ export type AccountNotification = {
   kind: string
   title: string
   message: string
+  orderId: number | null
   isRead: boolean
   createdAt: string
 }

@@ -164,6 +164,7 @@ const runSchemaMigration = () => {
   for (const row of database.prepare('PRAGMA table_info(products)').all()) columns.set(row.name, true)
   const orderColumns = new Set(database.prepare('PRAGMA table_info(orders)').all().map((row) => row.name))
 const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().map((row) => row.name))
+  const notificationColumns = new Set(database.prepare('PRAGMA table_info(notifications)').all().map((row) => row.name))
   const orderColumnDefinitions = {
     payment_url: 'TEXT',
     shipping_cost_ars: 'INTEGER NOT NULL DEFAULT 0',
@@ -263,6 +264,26 @@ const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().m
   if (!columns.has('tax_percent')) database.exec('ALTER TABLE products ADD COLUMN tax_percent REAL NOT NULL DEFAULT 0')
   if (!columns.has('profit_percent')) database.exec('ALTER TABLE products ADD COLUMN profit_percent REAL NOT NULL DEFAULT 0')
   if (!columns.has('colors_json')) database.exec("ALTER TABLE products ADD COLUMN colors_json TEXT NOT NULL DEFAULT '[]'")
+  if (!notificationColumns.has('order_id')) database.exec('ALTER TABLE notifications ADD COLUMN order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL')
+  database.exec(`
+    UPDATE notifications
+    SET order_id = (
+      SELECT orders.id
+      FROM orders
+      WHERE orders.user_id = notifications.user_id
+        AND instr(notifications.message, orders.reference) > 0
+      ORDER BY orders.id DESC
+      LIMIT 1
+    )
+    WHERE order_id IS NULL
+      AND EXISTS (
+        SELECT 1
+        FROM orders
+        WHERE orders.user_id = notifications.user_id
+          AND instr(notifications.message, orders.reference) > 0
+      );
+    CREATE INDEX IF NOT EXISTS notifications_order_id_idx ON notifications(order_id);
+  `)
   database.exec(`
     CREATE TABLE IF NOT EXISTS product_reviews (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -302,9 +323,9 @@ const verifyPassword = async (password, savedHash) => {
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex')
 
-const createNotification = (userId, kind, title, message) => {
+const createNotification = (userId, kind, title, message, orderId = null) => {
   if (!userId) return
-  database.prepare('INSERT INTO notifications (user_id, kind, title, message) VALUES (?, ?, ?, ?)').run(userId, kind, title, message)
+  database.prepare('INSERT INTO notifications (user_id, kind, title, message, order_id) VALUES (?, ?, ?, ?, ?)').run(userId, kind, title, message, orderId)
 }
 
 const nonNegativeIntegerFromEnv = (name) => {
@@ -1308,7 +1329,7 @@ const createOrderRecord = (request, items, shipping, { notify = true, paymentMet
       const nextTotalStock = Math.max(0, Number(selectProductById.get(item.product.id).stock || 0) - item.quantity)
       database.prepare('UPDATE products SET stock = ?, stock_by_size = ? WHERE id = ?').run(nextTotalStock, JSON.stringify(existingStock), item.product.id)
     }
-    if (notify) createNotification(userId, 'order_created', 'Pedido registrado', `Tu pedido ${reference} quedó registrado y está pendiente de pago.`)
+    if (notify) createNotification(userId, 'order_created', 'Pedido registrado', `Tu pedido ${reference} quedó registrado y está pendiente de pago.`, orderId)
     database.exec('COMMIT')
     return { order: { id: orderId, reference, totalArs: total, discountArs: discount, giftCardArs: giftApplied, lineItems: orderItems.map((item) => ({ id: String(item.product.id), title: item.product.name, description: item.product.isGiftCard ? 'Tarjeta de regalo' : `Talla ${item.size}`, quantity: item.quantity, unit_price: item.unitPrice, currency_id: 'ARS' })), shippingCostArs: shippingDetails.costArs, status: 'pending_payment' } }
   } catch (error) {
@@ -1359,7 +1380,7 @@ const cancelPendingOrderAndRestoreStock = (orderId, { removeOrder = false, reaso
     } else {
       createNotification(order.user_id, 'order_cancelled', 'Pago no completado', reason === 'expired'
         ? `El pedido ${order.reference} se canceló por falta de pago en ${pendingOrderExpiryDays} días. El stock fue liberado.`
-        : `El pago del pedido ${order.reference} no se completó. El stock fue liberado.`)
+        : `El pago del pedido ${order.reference} no se completó. El stock fue liberado.`, order.id)
     }
     database.exec('COMMIT')
     if (!removeOrder) void sendOrderEmail(order.id, 'cancelled')
@@ -1399,7 +1420,7 @@ app.get('/api/admin/gift-cards', requireAdmin, (_request, response) => {
 const markOrderPaidWithoutCharge = (order, userId) => {
   database.prepare("UPDATE orders SET status = 'paid' WHERE id = ?").run(order.id)
   order.status = 'paid'
-  createNotification(userId, 'order_paid', 'Compra confirmada', `Tu pedido ${order.reference} fue confirmado.`)
+  createNotification(userId, 'order_paid', 'Compra confirmada', `Tu pedido ${order.reference} fue confirmado.`, order.id)
   void sendOrderEmail(order.id, 'paid')
 }
 
@@ -1485,6 +1506,7 @@ app.get('/api/account/notifications', requireAuth, (request, response) => {
     kind: notification.kind,
     title: notification.title,
     message: notification.message,
+    orderId: notification.order_id == null ? null : Number(notification.order_id),
     isRead: Boolean(notification.is_read),
     createdAt: notification.created_at,
   })) })
@@ -1687,16 +1709,16 @@ app.patch('/api/admin/orders/:id/status', requireAdmin, (request, response) => {
     database.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, id)
   }
   if (changed && status === 'paid') {
-    createNotification(order.user_id, 'order_paid', 'Compra confirmada', `Tu pedido ${order.reference} fue confirmado.`)
+    createNotification(order.user_id, 'order_paid', 'Compra confirmada', `Tu pedido ${order.reference} fue confirmado.`, order.id)
     void sendOrderEmail(id, 'paid')
   }
   if (changed && status === 'shipped') {
-    createNotification(order.user_id, 'order_shipped', 'Pedido en camino', `Tu pedido ${order.reference} fue despachado.${trackingCode ? ` Seguimiento: ${trackingCode}.` : ''}`)
+    createNotification(order.user_id, 'order_shipped', 'Pedido en camino', `Tu pedido ${order.reference} fue despachado.${trackingCode ? ` Seguimiento: ${trackingCode}.` : ''}`, order.id)
     void sendOrderEmail(id, 'shipped')
   }
-  if (changed && status === 'delivered') createNotification(order.user_id, 'order_delivered', 'Pedido entregado', `Tu pedido ${order.reference} figura como entregado.`)
+  if (changed && status === 'delivered') createNotification(order.user_id, 'order_delivered', 'Pedido entregado', `Tu pedido ${order.reference} figura como entregado.`, order.id)
   if (changed && status === 'cancelled') {
-    createNotification(order.user_id, 'order_cancelled', 'Pedido cancelado', `Tu pedido ${order.reference} fue cancelado.`)
+    createNotification(order.user_id, 'order_cancelled', 'Pedido cancelado', `Tu pedido ${order.reference} fue cancelado.`, order.id)
     void sendOrderEmail(id, 'cancelled')
   }
   response.json({ ok: true, status, carrier, trackingCode, trackingUrl })
@@ -1899,7 +1921,9 @@ app.post('/api/payments/create-preference', resolveCheckoutUser, async (request,
       return response.json({ order: order.order, paymentUrl: null, initPoint: null })
     }
     const baseUrl = process.env.MP_RETURN_URL?.trim() || publicBaseUrl
-    const webhookUrl = process.env.MP_WEBHOOK_URL || (isProduction ? new URL('/api/payments/webhook', publicBaseUrl).toString() : null)
+    const webhookUrl = isProduction
+      ? new URL('/api/payments/webhook', publicBaseUrl).toString()
+      : process.env.MP_WEBHOOK_URL || null
     const preference = new Preference(mercadoPagoClient)
     const items = order.order.lineItems.map((line) => ({ ...line }))
     if (order.order.discountArs > 0 || order.order.giftCardArs > 0) {
@@ -1927,7 +1951,7 @@ app.post('/api/payments/create-preference', resolveCheckoutUser, async (request,
     const paymentUrl = mercadoPagoIsTestMode ? formattedPreference.sandbox_init_point : formattedPreference.init_point
     if (!paymentUrl) throw new Error('Mercado Pago no devolvió el enlace de pago esperado para estas credenciales.')
     database.prepare('UPDATE orders SET payment_url = ? WHERE id = ?').run(paymentUrl, order.order.id)
-    createNotification(request.user.id, 'order_created', 'Pedido registrado', `Tu pedido ${order.order.reference} quedó registrado y está pendiente de pago.`)
+    createNotification(request.user.id, 'order_created', 'Pedido registrado', `Tu pedido ${order.order.reference} quedó registrado y está pendiente de pago.`, order.order.id)
     void sendOrderEmail(order.order.id, 'created')
     response.json({
       order: order.order,
@@ -1963,6 +1987,75 @@ const hasValidWebhookSignature = (request, dataId) => {
   return expected.length === received.length && timingSafeEqual(Buffer.from(expected), Buffer.from(received))
 }
 
+const applyMercadoPagoPayment = (payment, resource) => {
+  const reference = payment.external_reference
+  if (!reference) return null
+  const order = database.prepare('SELECT id, user_id, total_ars, status FROM orders WHERE reference = ?').get(reference)
+  if (!order) return null
+  const paymentId = String(payment.id ?? resource)
+  const paymentStatus = String(payment.status ?? '').toLowerCase()
+  if (!paymentStatus) throw new Error('Mercado Pago no devolvió el estado del pago.')
+  const transactionAmount = Number(payment.transaction_amount)
+  if (payment.currency_id !== 'ARS' || !Number.isFinite(transactionAmount) || Math.round(transactionAmount * 100) !== order.total_ars * 100) {
+    throw new Error('El importe o la moneda del pago no coincide con el pedido.')
+  }
+  database.prepare(`
+    INSERT INTO payment_attempts (payment_id, order_id, status, status_detail)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(payment_id) DO UPDATE SET
+      status = excluded.status,
+      status_detail = excluded.status_detail,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE payment_attempts.order_id = excluded.order_id
+  `).run(paymentId, order.id, paymentStatus, payment.status_detail ?? null)
+
+  if (paymentStatus === 'approved') {
+    database.exec('BEGIN IMMEDIATE')
+    let becamePaid = false
+    try {
+      const currentOrder = database.prepare('SELECT id, user_id, reference, status FROM orders WHERE id = ?').get(order.id)
+      if (currentOrder && ['pending_payment', 'cancelled'].includes(currentOrder.status)) {
+        if (currentOrder.status === 'cancelled') adjustOrderStock(order.id, -1)
+        database.prepare("UPDATE orders SET status = 'paid' WHERE id = ?").run(order.id)
+        createNotification(order.user_id, 'order_paid', 'Compra confirmada', `Tu pedido ${reference} fue confirmado.`, order.id)
+        becamePaid = true
+      }
+      database.exec('COMMIT')
+      if (becamePaid) void sendOrderEmail(order.id, 'paid')
+    } catch (error) {
+      database.exec('ROLLBACK')
+      throw error
+    }
+  } else if (paymentStatus === 'rejected' || paymentStatus === 'cancelled') {
+    const attempts = database.prepare(`
+      SELECT COUNT(*) AS total,
+        SUM(CASE WHEN status IN ('rejected', 'cancelled') THEN 1 ELSE 0 END) AS negative
+      FROM payment_attempts WHERE order_id = ?
+    `).get(order.id)
+    if (attempts.total > 3 && attempts.total === attempts.negative) cancelPendingOrderAndRestoreStock(order.id)
+  }
+  const currentOrder = database.prepare('SELECT id, status FROM orders WHERE id = ?').get(order.id)
+  return { orderId: currentOrder.id, orderStatus: currentOrder.status, paymentStatus }
+}
+
+app.get('/api/payments/verify-return', async (request, response) => {
+  const paymentId = typeof request.query.payment_id === 'string' ? request.query.payment_id : ''
+  if (!/^\d{1,30}$/.test(paymentId)) return response.status(400).json({ error: 'Identificador de pago inválido.' })
+  if (!mercadoPagoAccessToken) return response.status(503).json({ error: 'La verificación de pagos no está configurada.' })
+  try {
+    const paymentResponse = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(paymentId)}`, {
+      headers: { Authorization: `Bearer ${mercadoPagoAccessToken}` },
+    })
+    if (!paymentResponse.ok) return response.status(502).json({ error: 'No se pudo verificar el pago con Mercado Pago.' })
+    const payment = await paymentResponse.json()
+    const result = applyMercadoPagoPayment(payment, paymentId)
+    if (!result) return response.status(404).json({ error: 'No se encontró el pedido asociado al pago.' })
+    response.json(result)
+  } catch (error) {
+    console.error('Could not verify Mercado Pago return:', error)
+    response.status(500).json({ error: 'No se pudo actualizar el estado del pago.' })
+  }
+})
 app.post('/api/payments/webhook', async (request, response) => {
   const type = request.body?.type
   const resource = request.body?.data?.id
@@ -1979,48 +2072,7 @@ app.post('/api/payments/webhook', async (request, response) => {
     })
     if (!paymentResponse.ok) throw new Error('No se pudo consultar el pago')
     const payment = await paymentResponse.json()
-    const reference = payment.external_reference
-    if (!reference) return response.json({ ok: true })
-    const order = database.prepare('SELECT id, user_id, status FROM orders WHERE reference = ?').get(reference)
-    if (!order) return response.json({ ok: true })
-    const paymentId = String(payment.id ?? resource)
-    const paymentStatus = String(payment.status ?? '').toLowerCase()
-    if (!paymentStatus) return response.status(400).json({ ok: false })
-    database.prepare(`
-      INSERT INTO payment_attempts (payment_id, order_id, status, status_detail)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(payment_id) DO UPDATE SET
-        status = excluded.status,
-        status_detail = excluded.status_detail,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE payment_attempts.order_id = excluded.order_id
-    `).run(paymentId, order.id, paymentStatus, payment.status_detail ?? null)
-
-    if (paymentStatus === 'approved') {
-      database.exec('BEGIN IMMEDIATE')
-      let becamePaid = false
-      try {
-        const currentOrder = database.prepare('SELECT id, user_id, reference, status FROM orders WHERE id = ?').get(order.id)
-        if (currentOrder && ['pending_payment', 'cancelled'].includes(currentOrder.status)) {
-          if (currentOrder.status === 'cancelled') adjustOrderStock(order.id, -1)
-          database.prepare("UPDATE orders SET status = 'paid' WHERE id = ?").run(order.id)
-          createNotification(order.user_id, 'order_paid', 'Compra confirmada', `Tu pedido ${reference} fue confirmado.`)
-          becamePaid = true
-        }
-        database.exec('COMMIT')
-        if (becamePaid) void sendOrderEmail(order.id, 'paid')
-      } catch (error) {
-        database.exec('ROLLBACK')
-        throw error
-      }
-    } else if (paymentStatus === 'rejected' || paymentStatus === 'cancelled') {
-      const attempts = database.prepare(`
-        SELECT COUNT(*) AS total,
-          SUM(CASE WHEN status IN ('rejected', 'cancelled') THEN 1 ELSE 0 END) AS negative
-        FROM payment_attempts WHERE order_id = ?
-      `).get(order.id)
-      if (attempts.total > 3 && attempts.total === attempts.negative) cancelPendingOrderAndRestoreStock(order.id)
-    }
+    applyMercadoPagoPayment(payment, resource)
     response.json({ ok: true })
   } catch {
     response.status(500).json({ ok: false })

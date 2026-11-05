@@ -649,17 +649,51 @@ function App() {
   const [cart, setCart] = useState<Record<string, number>>({})
   const [favorites, setFavorites] = useState<number[]>([])
   const [notifications, setNotifications] = useState<AccountNotification[]>([])
+  const [orderToOpen, setOrderToOpen] = useState<number | null>(null)
+  const [orderOpenRequestId, setOrderOpenRequestId] = useState(0)
   const [isNotificationMenuOpen, setIsNotificationMenuOpen] = useState(false)
   const [isCartOpen, setIsCartOpen] = useState(false)
   const notificationMenuRef = useRef<HTMLDivElement>(null)
   const notificationsSeenInView = useRef(new Set<number>())
   const [notice, setNotice] = useState(() => {
     const paymentStatus = new URLSearchParams(window.location.search).get('payment')
-    if (paymentStatus === 'success') return 'Compra confirmada. Gracias por tu pedido.'
     if (paymentStatus === 'pending') return 'Tu pago está en revisión. Te avisaremos cuando quede confirmado.'
     if (paymentStatus === 'failure') return 'No se pudo completar el pago. Puedes intentarlo nuevamente desde tu cuenta.'
+    if (paymentStatus === 'success' && !new URLSearchParams(window.location.search).get('payment_id')) {
+      return 'Volviste de Mercado Pago, pero no pudimos verificar el pago. Revisa el estado desde tu cuenta en unos minutos.'
+    }
     return ''
   })
+
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    const paymentStatus = url.searchParams.get('payment')
+    if (!paymentStatus) return
+    const paymentId = url.searchParams.get('payment_id')
+    for (const parameter of ['payment', 'payment_id', 'status', 'merchant_order_id', 'preference_id', 'external_reference']) {
+      url.searchParams.delete(parameter)
+    }
+    window.history.replaceState({}, '', url)
+
+    if (paymentStatus !== 'success' || !paymentId) return
+
+    let isCurrent = true
+    apiRequest<{ orderId: number; orderStatus: string; paymentStatus: string }>(`/api/payments/verify-return?payment_id=${encodeURIComponent(paymentId)}`)
+      .then(({ orderId, orderStatus }) => {
+        if (!isCurrent) return
+        if (orderStatus === 'paid' || orderStatus === 'shipped' || orderStatus === 'delivered') {
+          setNotice('Compra confirmada. Gracias por tu pedido.')
+          setOrderToOpen(orderId)
+          setOrderOpenRequestId((current) => current + 1)
+        } else {
+          setNotice('Tu pago todavía está en revisión. Actualizaremos el pedido cuando Mercado Pago lo confirme.')
+        }
+      })
+      .catch(() => {
+        if (isCurrent) setNotice('No pudimos verificar el pago en este momento. Revisa el estado del pedido desde tu cuenta en unos minutos.')
+      })
+    return () => { isCurrent = false }
+  }, [])
 
   useEffect(() => {
     const modelContext = navigator.modelContext
@@ -1065,7 +1099,7 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'auto' })
   }
 
-  const navigateToAccount = () => {
+  const navigateToAccount = (orderId?: number) => {
     const nextUrl = new URL(window.location.href)
     nextUrl.searchParams.delete('producto')
     nextUrl.searchParams.delete('admin')
@@ -1084,6 +1118,8 @@ function App() {
     setIsDiaryPage(false)
     setIsShopPage(false)
     setLegalPage(null)
+    setOrderToOpen(orderId ?? null)
+    if (orderId !== undefined) setOrderOpenRequestId((current) => current + 1)
     window.scrollTo({ top: 0, behavior: 'auto' })
   }
 
@@ -1128,6 +1164,12 @@ function App() {
     } catch (requestError) {
       showNotice(requestError instanceof Error ? requestError.message : 'No se pudo actualizar la notificación.')
     }
+  }
+
+  const openNotification = (notification: AccountNotification) => {
+    setIsNotificationMenuOpen(false)
+    if (notification.orderId !== null) navigateToAccount(notification.orderId)
+    void markNotificationRead(notification.id)
   }
 
   const toggleDisplayCurrency = (value: string) => {
@@ -1273,7 +1315,7 @@ function App() {
                 <button className={`menu-option${displayCurrency === 'USD' ? ' is-active' : ''}`} type="button" aria-pressed={displayCurrency === 'USD'} disabled={!usdArsRate} onClick={(event) => { toggleDisplayCurrency('USD'); event.currentTarget.closest('details')?.removeAttribute('open') }}>USD $</button>
               </div>
             </details>
-            <button className="account-trigger" type="button" onClick={navigateToAccount} aria-label={currentUser ? 'Mi cuenta' : 'Iniciar sesión o crear cuenta'} title="Mi cuenta"><UserRound size={19} aria-hidden="true" /></button>
+            <button className="account-trigger" type="button" onClick={() => navigateToAccount()} aria-label={currentUser ? 'Mi cuenta' : 'Iniciar sesión o crear cuenta'} title="Mi cuenta"><UserRound size={19} aria-hidden="true" /></button>
             {currentUser && <div className="notification-center" ref={notificationMenuRef}>
               <button className="notification-center__trigger" type="button" onClick={() => setIsNotificationMenuOpen((open) => !open)} aria-label={`Notificaciones, ${notifications.length} avisos`} aria-expanded={isNotificationMenuOpen} aria-controls="notification-menu">
                 <Bell size={18} aria-hidden="true" />
@@ -1283,10 +1325,12 @@ function App() {
                 <div className="notification-center__heading"><strong>Notificaciones</strong><span>{notifications.length}</span></div>
                 {notifications.length ? <div className="notification-center__list">{notifications.map((notification) => (
                   <article className="notification-center__item" key={notification.id}>
-                    <div><p>{notification.kind}</p><strong>{notification.title}</strong></div>
-                    <span>{notification.message}</span>
-                    <time>{new Date(`${notification.createdAt.replace(' ', 'T')}Z`).toLocaleString('es-AR', { dateStyle: 'medium', timeStyle: 'short' })}</time>
-                    <button type="button" onClick={() => { void markNotificationRead(notification.id) }} aria-label={`Marcar como leída: ${notification.title}`}><Check size={14} aria-hidden="true" /> Marcar leída</button>
+                    <button className="notification-center__open" type="button" onClick={() => openNotification(notification)} aria-label={notification.orderId === null ? `Marcar notificación como leída: ${notification.title}` : `Ver detalle de compra: ${notification.title}`}>
+                      <div><p>{notification.kind}</p><strong>{notification.title}</strong></div>
+                      <span>{notification.message}</span>
+                      <time>{new Date(`${notification.createdAt.replace(' ', 'T')}Z`).toLocaleString('es-AR', { dateStyle: 'medium', timeStyle: 'short' })}</time>
+                    </button>
+                    <button className="notification-center__mark-read" type="button" onClick={() => { void markNotificationRead(notification.id) }} aria-label={`Marcar como leída: ${notification.title}`}><Check size={14} aria-hidden="true" /> Marcar leída</button>
                   </article>
                 ))}</div> : <p className="notification-center__empty">No tenés avisos nuevos.</p>}
               </div>}
@@ -1301,7 +1345,7 @@ function App() {
       <main id="inicio" tabIndex={-1}>
         <Suspense fallback={<div className="async-route-loading" role="status">Cargando…</div>}>
         {isAdminPage && currentUser?.isAdmin ? <ProductAdmin products={products} onSave={saveProduct} onDelete={deleteProduct} onClose={navigateToStore} /> : isAccountPage || isAdminPage ? (
-          <AccountPanel user={currentUser} authLoading={authLoading} currency={displayCurrency} usdArsRate={usdArsRate} onAuthenticated={handleAuthenticated} onLogout={handleLogout} onOpenProduct={navigateToProduct} onOpenAdmin={navigateToAdmin} onToggleFavorite={toggleFavorite} />
+          <AccountPanel key={orderToOpen === null ? 'account' : `${orderToOpen}-${orderOpenRequestId}`} user={currentUser} authLoading={authLoading} currency={displayCurrency} usdArsRate={usdArsRate} orderToOpen={orderToOpen} onAuthenticated={handleAuthenticated} onLogout={handleLogout} onOpenProduct={navigateToProduct} onOpenAdmin={navigateToAdmin} onToggleFavorite={toggleFavorite} />
         ) : legalPage ? <LegalPages page={legalPage} store={storeConfig?.store ?? null} onBack={navigateToStore} onOpenPage={navigateToLegal} onOpenContact={navigateToContact} /> : isContactPage ? <ContactPage onBack={navigateToStore} /> : isAboutPage ? <AboutPage onBack={navigateToStore} onOpenDiary={navigateToDiary} onOpenShop={navigateToShop} /> : isDiaryPage ? <DiaryPage onBack={navigateToStore} onSubmit={handleNewsletter} /> : activeProduct ? (
           <ProductDetail
             key={activeProduct.id}
