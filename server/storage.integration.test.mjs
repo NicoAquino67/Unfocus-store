@@ -49,6 +49,7 @@ test('checkout conserva el stock y lo restituye al cancelar', { timeout: 30000, 
       SystemRoot: process.env.SystemRoot,
       TEMP: process.env.TEMP,
       NODE_ENV: 'test',
+      USD_ARS_RATE: '1000',
       PORT: String(port),
       DB_HOST: process.env.DB_HOST,
       DB_PORT: process.env.DB_PORT,
@@ -57,9 +58,12 @@ test('checkout conserva el stock y lo restituye al cancelar', { timeout: 30000, 
       DB_PASSWORD: process.env.DB_PASSWORD,
       TEST_PAYMENT_FIXTURE: paymentFixture,
       MP_ACCESS_TOKEN: 'test-token-not-used-with-real-service',
+      MP_ENVIRONMENT: 'test',
       UPLOAD_DIR: path.join(directory, 'uploads'),
       ADMIN_EMAIL: email,
       ADMIN_PASSWORD: password,
+      CORREO_ARGENTINO_API_KEY: 'test-api-key',
+      CORREO_ARGENTINO_AGREEMENT: 'test-agreement',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -101,12 +105,43 @@ test('checkout conserva el stock y lo restituye al cancelar', { timeout: 30000, 
   const login = await request('/api/auth/login', { method: 'POST', body: { email, password } })
   assert.equal(login.status, 200)
   assert.ok(login.cookie)
+  const privateSettings = await request('/api/admin/shipping-settings')
+  assert.equal(privateSettings.status, 403)
+  const shipping = await request('/api/admin/shipping-settings', { cookie: login.cookie })
+  assert.equal(shipping.status, 200)
+  assert.equal(JSON.stringify(shipping.body).includes('test-api-key'), false)
+  const shippingData = {
+    ...shipping.body.settings, senderName: 'Tienda', senderEmail: 'envios@example.test',
+    senderStreet: 'Calle', senderStreetNumber: '123', senderCity: 'Localidad',
+    senderProvinceCode: 'b', senderZipCode: '1757',
+    parcelWeightGrams: '800', parcelHeightCm: '6',
+  }
+  const savedShipping = await request('/api/admin/shipping-settings', { method: 'PUT', cookie: login.cookie, body: shippingData })
+  assert.equal(savedShipping.status, 200, JSON.stringify(savedShipping.body))
+  assert.equal(savedShipping.body.settings.senderProvinceCode, 'B')
+  const correoStatus = await request('/api/admin/correo-argentino/status', { cookie: login.cookie })
+  assert.equal(correoStatus.body.configured, true)
+  const invalidShipping = await request('/api/admin/shipping-settings', {
+    method: 'PUT', cookie: login.cookie, body: { ...shippingData, senderZipCode: 'inválido' },
+  })
+  assert.equal(invalidShipping.status, 400)
+  const reloadedShipping = await request('/api/admin/shipping-settings', { cookie: login.cookie })
+  assert.equal(reloadedShipping.body.settings.senderZipCode, '1757')
+  const clearedShipping = await request('/api/admin/shipping-settings', { method: 'PUT', cookie: login.cookie, body: { ...shippingData, senderName: '' } })
+  assert.equal(clearedShipping.status, 200)
+  const incompleteStatus = await request('/api/admin/correo-argentino/status', { cookie: login.cookie })
+  assert.equal(incompleteStatus.body.configured, false)
+  assert.ok(incompleteStatus.body.missing.includes('CORREO_SENDER_NAME'))
+  const restoredShipping = await request('/api/admin/shipping-settings', { method: 'PUT', cookie: login.cookie, body: shippingData })
+  assert.equal(restoredShipping.status, 200)
+  const publicConfig = await request('/api/config')
+  assert.equal(JSON.stringify(publicConfig.body).includes('envios@example.test'), false)
   const settings = await request('/api/admin/settings', { cookie: login.cookie })
   assert.equal(settings.status, 200)
   const configured = await request('/api/admin/settings', {
     method: 'PUT',
     cookie: login.cookie,
-    body: { ...settings.body.settings, pickupAddress: 'Tienda', transferHolder: 'Tienda', transferAlias: 'tienda.test' },
+    body: { ...settings.body.settings, shippingCostArs: 250, freeShippingThresholdArs: 1100, pickupAddress: 'Tienda', transferHolder: 'Tienda', transferAlias: 'tienda.test' },
   })
   assert.equal(configured.status, 200)
 
@@ -128,6 +163,101 @@ test('checkout conserva el stock y lo restituye al cancelar', { timeout: 30000, 
   })
   assert.equal(created.status, 201, JSON.stringify(created.body))
   const id = created.body.product.id
+  const deliveryOrder = await request('/api/orders', {
+    method: 'POST',
+    body: {
+      guest: { name: 'Cliente de prueba', email: 'delivery@example.test' },
+      paymentMethod: 'transfer', acceptTerms: true,
+      items: [{ productId: id, quantity: 1, size: 'M' }],
+      shipping: { method: 'delivery', name: 'Cliente de prueba', phone: '12345678', street: 'Calle 123', city: 'Localidad', province: 'Buenos Aires', postalCode: '1757', costArs: 0 },
+    },
+  })
+  assert.equal(deliveryOrder.status, 201, JSON.stringify(deliveryOrder.body))
+  assert.equal(deliveryOrder.body.order.shippingCostArs, 250)
+  assert.equal(deliveryOrder.body.order.totalArs, 1250)
+  const deliveryPaid = await request(`/api/admin/orders/${deliveryOrder.body.order.id}/status`, {
+    method: 'PATCH', cookie: login.cookie, body: { status: 'paid' },
+  })
+  assert.equal(deliveryPaid.status, 200)
+  const connection = await mysql.createConnection(mysqlConfig(process.env))
+  try {
+    await connection.execute('UPDATE orders SET mc_imported_at = ? WHERE id = ?', ['2026-01-01 00:00:00', deliveryOrder.body.order.id])
+  } finally {
+    await connection.end()
+  }
+  const duplicateShipment = await request(`/api/admin/orders/${deliveryOrder.body.order.id}/correo-argentino`, {
+    method: 'POST', cookie: login.cookie,
+  })
+  assert.equal(duplicateShipment.status, 400)
+  assert.match(duplicateShipment.body.error, /importado a MiCorreo/)
+  const deliveryCancelled = await request(`/api/admin/orders/${deliveryOrder.body.order.id}/status`, {
+    method: 'PATCH', cookie: login.cookie, body: { status: 'cancelled' },
+  })
+  assert.equal(deliveryCancelled.status, 200)
+  const unauthorizedRates = await request('/api/admin/province-shipping-rates')
+  assert.equal(unauthorizedRates.status, 403)
+  const provinceRates = { 'Buenos Aires': { baseArs: 300, marginArs: 30 }, Chaco: { baseArs: 0, marginArs: 0 } }
+  const savedRates = await request('/api/admin/province-shipping-rates', {
+    method: 'PUT', cookie: login.cookie, body: { rates: provinceRates },
+  })
+  assert.equal(savedRates.status, 200)
+  const invalidRates = await request('/api/admin/province-shipping-rates', {
+    method: 'PUT', cookie: login.cookie, body: { rates: { Chaco: { baseArs: -1, marginArs: 10 } } },
+  })
+  assert.equal(invalidRates.status, 400)
+  const reloadedRates = await request('/api/admin/province-shipping-rates', { cookie: login.cookie })
+  assert.deepEqual(reloadedRates.body.rates, provinceRates)
+  const updatedConfig = await request('/api/config')
+  assert.deepEqual(updatedConfig.body.shipping.provinceCostsArs, { 'Buenos Aires': 330, Chaco: 0 })
+  assert.equal(JSON.stringify(updatedConfig.body).includes('baseArs'), false)
+  const stalePreference = await request('/api/payments/create-preference', {
+    method: 'POST', cookie: login.cookie,
+    body: {
+      acceptTerms: true, expectedShippingCostArs: 250,
+      items: [{ productId: id, quantity: 1, size: 'M' }],
+      shipping: { method: 'delivery', name: 'Cliente de prueba', phone: '12345678', street: 'Calle 123', city: 'Localidad', province: 'Buenos Aires', postalCode: '1757' },
+    },
+  })
+  assert.equal(stalePreference.status, 400)
+  assert.match(stalePreference.body.error, /costo de envío cambió/)
+  const preference = await request('/api/payments/create-preference', {
+    method: 'POST',
+    body: {
+      guest: { name: 'Cliente de prueba', email: 'mp-delivery@example.test' },
+      acceptTerms: true, expectedShippingCostArs: 330,
+      items: [{ productId: id, quantity: 1, size: 'M' }],
+      shipping: { method: 'delivery', name: 'Cliente de prueba', phone: '12345678', street: 'Calle 123', city: 'Localidad', province: 'Buenos Aires', postalCode: '1757', costArs: 0 },
+    },
+  })
+  assert.equal(preference.status, 200, JSON.stringify(preference.body))
+  assert.equal(preference.body.order.shippingCostArs, 330)
+  assert.equal(preference.body.order.totalArs, 1330)
+  const preferenceCancelled = await request(`/api/admin/orders/${preference.body.order.id}/status`, {
+    method: 'PATCH', cookie: login.cookie, body: { status: 'cancelled' },
+  })
+  assert.equal(preferenceCancelled.status, 200)
+  const freeShippingSettings = await request('/api/admin/settings', {
+    method: 'PUT', cookie: login.cookie, body: { ...configured.body.settings, freeShippingThresholdArs: 1000 },
+  })
+  assert.equal(freeShippingSettings.status, 200)
+  const freeDelivery = await request('/api/orders', {
+    method: 'POST', cookie: login.cookie,
+    body: {
+      paymentMethod: 'transfer', acceptTerms: true,
+      items: [{ productId: id, quantity: 1, size: 'M' }],
+      shipping: { method: 'delivery', name: 'Cliente de prueba', phone: '12345678', street: 'Calle 123', city: 'Localidad', province: 'Buenos Aires', postalCode: '1757' },
+    },
+  })
+  assert.equal(freeDelivery.status, 201, JSON.stringify(freeDelivery.body))
+  assert.equal(freeDelivery.body.order.shippingCostArs, 0)
+  const freeDeliveryCancelled = await request(`/api/admin/orders/${freeDelivery.body.order.id}/status`, {
+    method: 'PATCH', cookie: login.cookie, body: { status: 'cancelled' },
+  })
+  assert.equal(freeDeliveryCancelled.status, 200)
+  const restoredStoreSettings = await request('/api/admin/settings', {
+    method: 'PUT', cookie: login.cookie, body: configured.body.settings,
+  })
+  assert.equal(restoredStoreSettings.status, 200)
   const repeatedItem = { productId: id, quantity: 1, size: 'M' }
   const duplicateAttempt = await request('/api/orders', {
     method: 'POST',
@@ -263,6 +393,7 @@ test('checkout conserva el stock y lo restituye al cancelar', { timeout: 30000, 
   assert.equal(spentOrder.status, 201, JSON.stringify(spentOrder.body))
   assert.equal(spentOrder.body.order.status, 'paid')
   const card = await request('/api/gift-cards/validate', { method: 'POST', body: { code: cards.body.giftCards[0].code } })
+  assert.equal(card.status, 200, JSON.stringify(card.body))
   assert.equal(card.body.balanceArs, 29000)
   const cancelSpentGift = await request(`/api/admin/orders/${giftOrder.body.order.id}/status`, {
     method: 'PATCH', cookie: login.cookie, body: { status: 'cancelled' },

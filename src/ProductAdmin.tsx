@@ -2,6 +2,8 @@ import { useEffect, useState, type FormEvent, type MouseEvent } from 'react'
 import { ArrowLeft, Check, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import AdminCoupons from './AdminCoupons'
 import AdminGiftCards from './AdminGiftCards'
+import AdminShippingSettings, { type ShippingStatus } from './AdminShippingSettings'
+import AdminProvinceRates from './AdminProvinceRates'
 import { apiRequest, type AdminOrder, type AdminReport, type AdminSummary, type ContactMessage, type NewsletterSubscriber, type OrderStatus, type StoreSettings } from './api'
 import { formatPrice, getSalePrice, hasDiscount, getProductFacets, getProductImage, garmentCuts, productAudiences, productGenders, productFacetTag, sizes, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
 import './ProductAdmin.css'
@@ -46,6 +48,16 @@ const adminSections = [
   { id: 'newsletter', label: 'Newsletter' },
   { id: 'messages', label: 'Mensajes' },
 ] as const
+
+const shippingMissingLabels: Record<string, string> = {
+  CORREO_SENDER_NAME: 'nombre del remitente',
+  CORREO_SENDER_STREET: 'calle del remitente',
+  CORREO_SENDER_STREET_NUMBER: 'número de calle',
+  CORREO_SENDER_CITY: 'localidad del remitente',
+  CORREO_SENDER_PROVINCE_CODE: 'código de provincia',
+  CORREO_SENDER_ZIP_CODE: 'código postal del remitente',
+}
+const describeShippingMissing = (missing: string[]) => missing.map((name) => shippingMissingLabels[name] ?? `${name} (servidor)`).join(', ')
 
 const minProductImages = 3
 const maxProductImages = 10
@@ -158,9 +170,8 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
   const [settings, setSettings] = useState<StoreSettings | null>(null)
   const [settingsMessage, setSettingsMessage] = useState('')
   const [trackingDrafts, setTrackingDrafts] = useState<Record<number, { carrier: string; trackingCode: string; trackingUrl: string }>>({})
-  const [correoStatus, setCorreoStatus] = useState<{ configured: boolean; missing: string[]; environment: string } | null>(null)
+  const [correoStatus, setCorreoStatus] = useState<ShippingStatus | null>(null)
   const [correoBusyId, setCorreoBusyId] = useState<number | null>(null)
-  const [miCorreoStatus, setMiCorreoStatus] = useState<{ configured: boolean; missing: string[]; environment: string } | null>(null)
   const [reportDays, setReportDays] = useState(30)
   const [report, setReport] = useState<AdminReport | null>(null)
 
@@ -188,9 +199,6 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
     let isCurrent = true
     apiRequest<{ configured: boolean; missing: string[]; environment: string }>('/api/admin/correo-argentino/status')
       .then((status) => { if (isCurrent) setCorreoStatus(status) })
-      .catch(() => undefined)
-    apiRequest<{ configured: boolean; missing: string[]; environment: string }>('/api/admin/micorreo/status')
-      .then((status) => { if (isCurrent) setMiCorreoStatus(status) })
       .catch(() => undefined)
     return () => { isCurrent = false }
   }, [])
@@ -424,19 +432,6 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
       setFormError('')
     } catch (requestError) {
       setFormError(requestError instanceof Error ? requestError.message : 'No se pudo generar el envío.')
-    } finally {
-      setCorreoBusyId(null)
-    }
-  }
-
-  const importToMiCorreo = async (orderId: number) => {
-    setCorreoBusyId(orderId)
-    try {
-      await apiRequest<{ ok: true }>(`/api/admin/orders/${orderId}/micorreo/import`, { method: 'POST' })
-      setOrders((current) => current.map((order) => order.id === orderId ? { ...order, miCorreoImported: true } : order))
-      setFormError('')
-    } catch (requestError) {
-      setFormError(requestError instanceof Error ? requestError.message : 'No se pudo importar el pedido a MiCorreo.')
     } finally {
       setCorreoBusyId(null)
     }
@@ -681,8 +676,8 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
           <div id="admin-section-orders" hidden={activeSection !== 'orders'}>
           <div className="admin-order-panel">
             <div className="admin-order-panel__header"><p className="eyebrow">Pedidos</p><h3>Estado de operaciones</h3></div>
-            {correoStatus && !correoStatus.configured && <p className="admin-form-error" role="status">Correo Argentino sin configurar. Faltan en el .env del servidor: {correoStatus.missing.join(', ')}.</p>}
-            {miCorreoStatus && !miCorreoStatus.configured && <p className="admin-form-error" role="status">MiCorreo sin configurar (el checkout usa la tarifa fija). Faltan en el .env del servidor: {miCorreoStatus.missing.join(', ')}.</p>}
+            {correoStatus && !correoStatus.configured && <p className="admin-form-error" role="status">Correo Argentino sin configurar. Faltan: {describeShippingMissing(correoStatus.missing)}. Completa los datos operativos abajo; las credenciales se configuran en el servidor.</p>}
+            <AdminShippingSettings onStatusChange={setCorreoStatus} />
             <div className="admin-order-list">{orders.length ? orders.map((order) => (
               <article key={order.id} className="admin-order-card">
                 <div className="admin-order-card__meta"><strong>{order.reference}</strong><span>{order.userName} · {order.userEmail}</span></div>
@@ -702,7 +697,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
                   <p>{order.items.map((item) => `${item.quantity}× ${item.name} (${item.size})`).join(', ')}</p>
                   {order.status === 'paid' && (
                     <div className="admin-tracking-form">
-                      {order.shipping.method === 'delivery' && correoStatus?.configured && (
+                      {order.shipping.method === 'delivery' && correoStatus?.configured && !order.miCorreoImported && (
                         order.correoArgentino
                           ? <>
                               <a href={`/api/admin/orders/${order.id}/correo-argentino/label`} target="_blank" rel="noreferrer">Ver rótulo (PDF)</a>
@@ -710,11 +705,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
                             </>
                           : <button type="button" disabled={correoBusyId === order.id} onClick={() => { void createCorreoShipment(order.id) }}>Generar envío Correo Argentino</button>
                       )}
-                      {order.shipping.method === 'delivery' && miCorreoStatus?.configured && !order.correoArgentino && (
-                        order.miCorreoImported
-                          ? <span>Importado a MiCorreo: despáchalo desde el portal y pega acá el seguimiento.</span>
-                          : <button type="button" disabled={correoBusyId === order.id} onClick={() => { void importToMiCorreo(order.id) }}>Importar a MiCorreo</button>
-                      )}
+                      {order.miCorreoImported && <span>Pedido importado anteriormente a MiCorreo. Verifica su envío antes de generar otro.</span>}
                       <input placeholder="Transporte (Andreani, Correo…)" value={trackingDrafts[order.id]?.carrier ?? order.carrier} onChange={(event) => updateTracking(order.id, 'carrier', event.target.value)} />
                       <input placeholder="Código de seguimiento" value={trackingDrafts[order.id]?.trackingCode ?? order.trackingCode} onChange={(event) => updateTracking(order.id, 'trackingCode', event.target.value)} />
                       <input placeholder="Link de seguimiento (opcional)" value={trackingDrafts[order.id]?.trackingUrl ?? order.trackingUrl} onChange={(event) => updateTracking(order.id, 'trackingUrl', event.target.value)} />
@@ -733,7 +724,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
             <form className="admin-settings-panel" onSubmit={(event) => { void saveSettings(event) }}>
               <div className="admin-order-panel__header"><p className="eyebrow">Tienda</p><h3>Envíos y datos legales</h3></div>
               <div className="admin-form-grid">
-                <label className="admin-field"><span>Costo de envío (ARS)</span><input type="number" min="0" step="1" value={settings.shippingCostArs} onChange={(event) => updateSetting('shippingCostArs', event.target.value)} /></label>
+                <label className="admin-field"><span>Costo de envío general (ARS)</span><input type="number" min="0" step="1" value={settings.shippingCostArs} onChange={(event) => updateSetting('shippingCostArs', event.target.value)} /></label>
                 <label className="admin-field"><span>Envío gratis desde (ARS, 0 = nunca)</span><input type="number" min="0" step="1" value={settings.freeShippingThresholdArs} onChange={(event) => updateSetting('freeShippingThresholdArs', event.target.value)} /></label>
                 <label className="admin-field admin-field--wide"><span>Dirección de retiro (vacío = sin retiro)</span><input maxLength={200} value={settings.pickupAddress} onChange={(event) => updateSetting('pickupAddress', event.target.value)} /></label>
                 <label className="admin-field"><span>Razón social</span><input maxLength={200} value={settings.legalName} onChange={(event) => updateSetting('legalName', event.target.value)} /></label>
@@ -746,6 +737,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
               <div className="admin-editor__footer"><button className="button button--coral" type="submit"><Check size={16} aria-hidden="true" /> Guardar configuración</button></div>
             </form>
           )}
+          <AdminProvinceRates />
           </div>
 
           <div id="admin-section-coupons" hidden={activeSection !== 'coupons'}>

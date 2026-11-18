@@ -26,7 +26,6 @@ export type ShippingDetails = {
   province: string
   postalCode: string
   notes: string
-  rateType?: string
 }
 
 export type AdminReport = {
@@ -38,15 +37,6 @@ export type AdminReport = {
   topProducts: { name: string; units: number; revenue: number }[]
   lowStock: { productId: number; name: string; size: string; stock: number }[]
   lowStockThreshold: number
-}
-
-export type ShippingRate = {
-  deliveredType: string
-  productType: string
-  productName: string
-  priceArs: number
-  deliveryTimeMin: string | null
-  deliveryTimeMax: string | null
 }
 
 export type SavedAddress = Omit<ShippingDetails, 'method' | 'notes'> & {
@@ -128,6 +118,28 @@ export type StoreSettings = {
   transferTaxId: string
 }
 
+export type ProvinceShippingRates = Record<string, { baseArs: number; marginArs: number }>
+
+export type ShippingSettings = {
+  senderName: string
+  senderEmail: string
+  senderAreaCode: string
+  senderPhone: string
+  senderStreet: string
+  senderStreetNumber: string
+  senderFloor: string
+  senderDepartment: string
+  senderCity: string
+  senderProvinceCode: string
+  senderZipCode: string
+  serviceType: string
+  parcelWeightGrams: string
+  parcelHeightCm: string
+  parcelWidthCm: string
+  parcelDepthCm: string
+  parcelCategory: string
+}
+
 export type AdminSummary = {
   products: number
   orders: number
@@ -158,7 +170,7 @@ export type StoreConfig = {
   usdArsRate: number | null
   exchangeSource: string | null
   exchangeUpdatedAt: string | null
-  shipping: { costArs: number; freeThresholdArs: number; pickupAddress: string }
+  shipping: { costArs: number; freeThresholdArs: number; pickupAddress: string; provinceCostsArs: Record<string, number> }
   transfer: TransferDetails | null
   store: { legalName: string; taxId: string; address: string; email: string; phone: string }
 }

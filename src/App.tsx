@@ -22,8 +22,9 @@ import {
 import unfocusLogo from './assets/logo-full-color.png'
 import PriceTag from './PriceTag'
 import { categories, getSalePrice, hasDiscount, formatPrice, getDefaultSize, getProductImage, getProductFacets, getStockForSize, giftCardAmounts, giftCardMaximum, giftCardMinimum, isValidGiftCardAmount, initialProducts, normalizeProductFacets, garmentCuts, productAudiences, productGenders, sizes, type CategoryFilter, type DisplayCurrency, type GarmentCut, type Product, type ProductAudience, type ProductGender } from './catalog'
-import { apiRequest, type AccountNotification, type AccountSummary, type AccountUser, type ProductReview, type ShippingRate, type StoreConfig } from './api'
+import { apiRequest, type AccountNotification, type AccountSummary, type AccountUser, type ProductReview, type StoreConfig } from './api'
 import { calculateShipping } from './shipping'
+import provinces from '../server/provinces.json'
 const AccountPanel = lazy(() => import('./AccountPanel'))
 const ProductAdmin = lazy(() => import('./ProductAdmin'))
 const CheckoutForm = lazy(() => import('./CheckoutForm'))
@@ -72,64 +73,17 @@ const garmentMeasurements: Record<string, { chest: number; length: number }> = {
 
 const productsPerPage = 12
 
-const addBusinessDays = (days: number) => {
-  const date = new Date()
-  let remaining = days
-  while (remaining > 0) {
-    date.setDate(date.getDate() + 1)
-    if (date.getDay() !== 0 && date.getDay() !== 6) remaining -= 1
-  }
-  return date
-}
-
-const formatDeliveryDate = (date: Date) => date.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })
-
-function ShippingCalculator({ productId, size, priceArs, shipping, currency, usdArsRate }: { productId: number; size: string; priceArs: number; shipping: StoreConfig['shipping'] | null; currency: DisplayCurrency; usdArsRate: number | null }) {
-  const [postalCode, setPostalCode] = useState(() => window.localStorage.getItem('unfocus-postal-code') ?? '')
-  const [state, setState] = useState<{ status: 'idle' | 'loading' | 'done' | 'error'; rates: ShippingRate[]; available: boolean; message: string }>({ status: 'idle', rates: [], available: true, message: '' })
-  const fallbackShipping = calculateShipping(priceArs, 'delivery', shipping)
-
-  const calculate = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const destination = postalCode.trim().toUpperCase()
-    if (!/^[A-Z0-9 -]{4,10}$/.test(destination)) {
-      setState({ status: 'error', rates: [], available: true, message: 'Ingresa un código postal válido.' })
-      return
-    }
-    window.localStorage.setItem('unfocus-postal-code', destination)
-    setState({ status: 'loading', rates: [], available: true, message: '' })
-    try {
-      const result = await apiRequest<{ available: boolean; rates: ShippingRate[] }>('/api/shipping/quote', { method: 'POST', body: JSON.stringify({ items: [{ productId, size, quantity: 1 }], postalCode: destination }) })
-      setState({ status: 'done', rates: result.rates, available: result.available, message: '' })
-    } catch (error) {
-      setState({ status: 'error', rates: [], available: true, message: error instanceof Error ? error.message : 'No pudimos calcular el envío.' })
-    }
-  }
-
+function ShippingCalculator({ priceArs, shipping, currency, usdArsRate }: { priceArs: number; shipping: StoreConfig['shipping'] | null; currency: DisplayCurrency; usdArsRate: number | null }) {
+  const [province, setProvince] = useState('')
+  const cost = calculateShipping(priceArs, 'delivery', shipping, province)
   return (
     <div className="shipping-calculator">
-      <form onSubmit={calculate}>
-        <label htmlFor="shipping-calculator-postal">Calcular envío</label>
-        <div>
-          <input id="shipping-calculator-postal" inputMode="text" maxLength={10} placeholder="Ej. C1000" value={postalCode} onChange={(event) => setPostalCode(event.target.value.toUpperCase())} autoComplete="postal-code" />
-          <button type="submit" disabled={state.status === 'loading'}>{state.status === 'loading' ? 'Calculando…' : 'Calcular'}</button>
-        </div>
-      </form>
-      <div aria-live="polite">
-        {state.status === 'error' && <p className="shipping-calculator__error">{state.message}</p>}
-        {state.status === 'done' && !state.available && <p>{shipping ? `Estimación para ${postalCode}: ${fallbackShipping > 0 ? formatPrice(fallbackShipping, currency, usdArsRate) : 'sin cargo'}. ` : 'El costo de envío todavía no está configurado. '}La cotización exacta requiere las credenciales de Correo Argentino y se confirma al finalizar la compra.</p>}
-        {state.status === 'done' && state.rates.map((rate) => {
-          const min = Number.parseInt(rate.deliveryTimeMin ?? '', 10)
-          const max = Number.parseInt(rate.deliveryTimeMax ?? '', 10)
-          const hasEstimate = Number.isFinite(max)
-          return (
-            <p key={`${rate.deliveredType}-${rate.productType}`}>
-              <strong>{rate.productName}: {rate.priceArs.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 })}</strong>
-              {hasEstimate && <span> · Llega entre el {formatDeliveryDate(addBusinessDays(Number.isFinite(min) ? min : max))} y el {formatDeliveryDate(addBusinessDays(max))}</span>}
-            </p>
-          )
-        })}
-      </div>
+      <label htmlFor="shipping-calculator-province">Calcular envío por provincia</label>
+      <select id="shipping-calculator-province" value={province} onChange={(event) => setProvince(event.target.value)}>
+        <option value="">Selecciona una provincia</option>
+        {provinces.map((name) => <option key={name} value={name}>{name}</option>)}
+      </select>
+      {province && <p>{shipping ? `Envío a domicilio para este producto: ${cost > 0 ? formatPrice(cost, currency, usdArsRate) : 'sin cargo'}.` : 'El costo de envío no está disponible en este momento.'}</p>}
     </div>
   )
 }
@@ -328,7 +282,7 @@ function ProductDetail({ product, relatedProducts, relatedTitle, selectedSize, s
               {restockMessage && <p className="restock-alert__message" role="status">{restockMessage}</p>}
             </form>
           )}
-          {!product.isGiftCard && <ShippingCalculator productId={product.id} size={selectedSize} priceArs={getSalePrice(product)} shipping={shipping} currency={currency} usdArsRate={usdArsRate} />}
+          {!product.isGiftCard && <ShippingCalculator priceArs={getSalePrice(product)} shipping={shipping} currency={currency} usdArsRate={usdArsRate} />}
           <button className="button button--coral product-detail__add" type="button" onClick={onAddToCart} disabled={getStockForSize(product, selectedSize) <= 0 || (product.isGiftCard === true && !isValidGiftCardAmount(selectedSize))}>Añadir a la bolsa <ShoppingBag size={17} aria-hidden="true" /></button>
           <p className="product-detail__note">¿Necesitas ayuda para elegir? <button type="button" onClick={onOpenContact}>Escríbenos</button></p>
         </div>
@@ -1198,17 +1152,23 @@ function App() {
     }
   }
 
-  const startCheckout = () => {
-    setCheckoutStep('delivery')
+  const startCheckout = async () => {
+    try {
+      const config = await apiRequest<StoreConfig>('/api/config')
+      setStoreConfig(config)
+      setCheckoutStep('delivery')
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : 'No se pudo actualizar el costo de envío.')
+    }
   }
 
-  const handleCheckout = async ({ shipping, acceptTerms, paymentMethod, guest, couponCode, giftCardCode }: CheckoutPayload) => {
+  const handleCheckout = async ({ shipping, acceptTerms, paymentMethod, expectedShippingCostArs, guest, couponCode, giftCardCode }: CheckoutPayload) => {
     setIsCheckingOut(true)
     try {
       if (paymentMethod === 'transfer') {
         const transferResult = await apiRequest<{ order: { reference: string } }>('/api/orders', {
           method: 'POST',
-          body: JSON.stringify({ items: cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity })), shipping, acceptTerms, paymentMethod, guest, couponCode, giftCardCode }),
+          body: JSON.stringify({ items: cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity })), shipping, expectedShippingCostArs, acceptTerms, paymentMethod, guest, couponCode, giftCardCode }),
         })
         setCart({})
         setIsCartOpen(false)
@@ -1219,7 +1179,7 @@ function App() {
       }
       const result = await apiRequest<{ order: { reference: string }; paymentUrl: string | null }>('/api/payments/create-preference', {
         method: 'POST',
-        body: JSON.stringify({ items: cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity })), shipping, acceptTerms, guest, couponCode, giftCardCode }),
+        body: JSON.stringify({ items: cartItems.map((item) => ({ productId: item.id, size: item.size, quantity: item.quantity })), shipping, expectedShippingCostArs, acceptTerms, guest, couponCode, giftCardCode }),
       })
       setCart({})
       setIsCartOpen(false)
@@ -1348,7 +1308,7 @@ function App() {
 
       <main id="inicio" tabIndex={-1}>
         <Suspense fallback={<div className="async-route-loading" role="status">Cargando…</div>}>
-        {isAdminPage && currentUser?.isAdmin ? <ProductAdmin products={products} onSave={saveProduct} onDelete={deleteProduct} onClose={navigateToStore} /> : isAccountPage || isAdminPage ? (
+        {isAdminPage && currentUser?.isAdmin ? <ProductAdmin products={products} onSave={saveProduct} onDelete={deleteProduct} onClose={() => { navigateToStore(); void apiRequest<StoreConfig>('/api/config').then(setStoreConfig).catch(() => showNotice('No se pudieron actualizar las tarifas de envío.')) }} /> : isAccountPage || isAdminPage ? (
           <AccountPanel key={orderToOpen === null ? 'account' : `${orderToOpen}-${orderOpenRequestId}`} user={currentUser} authLoading={authLoading} currency={displayCurrency} usdArsRate={usdArsRate} orderToOpen={orderToOpen} onAuthenticated={handleAuthenticated} onLogout={handleLogout} onOpenProduct={navigateToProduct} onOpenAdmin={navigateToAdmin} onToggleFavorite={toggleFavorite} />
         ) : legalPage ? <LegalPages page={legalPage} store={storeConfig?.store ?? null} onBack={navigateToStore} onOpenPage={navigateToLegal} onOpenContact={navigateToContact} /> : isContactPage ? <ContactPage onBack={navigateToStore} /> : isAboutPage ? <AboutPage onBack={navigateToStore} onOpenDiary={navigateToDiary} onOpenShop={navigateToShop} /> : isDiaryPage ? <DiaryPage onBack={navigateToStore} onSubmit={handleNewsletter} /> : activeProduct ? (
           <ProductDetail
@@ -1507,7 +1467,7 @@ function App() {
                     <button className="cart-item__remove" type="button" onClick={() => changeQuantity(item.cartKey, -item.quantity)} aria-label={`Eliminar ${item.name}, talla ${item.size}`}><X size={16} /></button>
                   </article>
                 ))}</div>
-                <div className="cart-summary"><p className="shipping-note"><Truck size={17} strokeWidth={1.7} /> {storeConfig?.shipping.freeThresholdArs ? `Envío gratis desde ${formatPrice(storeConfig.shipping.freeThresholdArs, displayCurrency, usdArsRate)}. ` : ''}El costo de envío se calcula en el siguiente paso.</p><div className="cart-subtotal"><span>Subtotal</span><strong>{formatPrice(cartTotal, displayCurrency, usdArsRate)}</strong></div><p className="cart-tax-note">El pago se realiza en ARS con Mercado Pago.</p><button className="button button--coral checkout-button" type="button" onClick={startCheckout}>Continuar <ArrowRight size={17} /></button><button className="continue-shopping" type="button" onClick={() => setIsCartOpen(false)}>Seguir mirando</button></div>
+                <div className="cart-summary"><p className="shipping-note"><Truck size={17} strokeWidth={1.7} /> {storeConfig?.shipping.freeThresholdArs ? `Envío gratis desde ${formatPrice(storeConfig.shipping.freeThresholdArs, displayCurrency, usdArsRate)}. ` : ''}El costo de envío se calcula en el siguiente paso.</p><div className="cart-subtotal"><span>Subtotal</span><strong>{formatPrice(cartTotal, displayCurrency, usdArsRate)}</strong></div><p className="cart-tax-note">El pago se realiza en ARS con Mercado Pago.</p><button className="button button--coral checkout-button" type="button" onClick={() => { void startCheckout() }}>Continuar <ArrowRight size={17} /></button><button className="continue-shopping" type="button" onClick={() => setIsCartOpen(false)}>Seguir mirando</button></div>
               </>
             )}
           </aside>

@@ -134,6 +134,11 @@
 .admin-tracking-form button { min-height: 36px; border: 0; border-radius: 999px; padding: 0 16px; background: var(--brand-blue-deep); color: #fff; font: 600 11px var(--sans); cursor: pointer; }
 .admin-settings-panel { margin-top: 28px; padding: 22px; border: 1px solid var(--line); background: #fff; }
 .admin-settings-panel__message { margin: 12px 0 0; color: var(--brand-blue-deep); font-size: 12px; }
+.admin-shipping-settings { margin: 16px 0; padding: 16px; border: 1px solid var(--line); background: #fff; }
+.admin-shipping-settings summary { color: var(--brand-blue-deep); font: 600 14px var(--sans); cursor: pointer; }
+.admin-shipping-settings[open] summary { margin-bottom: 14px; }
+.admin-shipping-settings__group { min-width: 0; margin: 16px 0 0; padding: 14px; border: 1px solid var(--line); }
+.admin-shipping-settings__group legend { padding: 0 6px; color: var(--ink); font-weight: 600; }
 
 .admin-hint { margin: 0 0 8px; color: #666; font-size: 12px; }
 
