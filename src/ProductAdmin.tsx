@@ -36,6 +36,17 @@ type ProductAdminProps = {
   onClose: () => void
 }
 
+const adminSections = [
+  { id: 'overview', label: 'Resumen' },
+  { id: 'products', label: 'Productos' },
+  { id: 'orders', label: 'Pedidos' },
+  { id: 'settings', label: 'Configuración' },
+  { id: 'coupons', label: 'Cupones' },
+  { id: 'gift-cards', label: 'Tarjetas de regalo' },
+  { id: 'newsletter', label: 'Newsletter' },
+  { id: 'messages', label: 'Mensajes' },
+] as const
+
 const minProductImages = 3
 const maxProductImages = 10
 const priceRoundingStep = 1000
@@ -130,6 +141,7 @@ const createSlug = (value: string) =>
   value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
 function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps) {
+  const [activeSection, setActiveSection] = useState<(typeof adminSections)[number]['id']>('products')
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState<ProductDraft | null>(null)
   const [adminProducts, setAdminProducts] = useState<Product[]>([])
@@ -474,29 +486,34 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
       <header className="admin-panel__heading">
         <div>
           <p className="eyebrow">UnFocus Mall · Administración</p>
-          <h1 id="admin-title">Productos</h1>
-          <p>Gestiona prendas, descripciones e imágenes del catálogo.</p>
+          <h1 id="admin-title">Administración</h1>
+          <p>Gestiona tu tienda desde un solo lugar.</p>
         </div>
         <button className="admin-back-button" type="button" onClick={onClose}><ArrowLeft size={16} aria-hidden="true" /> Volver a la tienda</button>
       </header>
 
+      <nav className="dashboard-navigation" aria-label="Secciones de administración">
+        {adminSections.map((section) => (
+          <button key={section.id} type="button" className={activeSection === section.id ? 'is-active' : ''} aria-pressed={activeSection === section.id} aria-controls={`admin-section-${section.id}`} onClick={() => setActiveSection(section.id)}>
+            {section.label}
+          </button>
+        ))}
+      </nav>
+
+      <div id="admin-section-overview" hidden={activeSection !== 'overview'}>
       <div className="admin-stats" aria-label="Resumen del catálogo">
         <div><span>Productos publicados</span><strong>{summary?.products ?? products.length}</strong></div>
         <div><span>Pedidos totales</span><strong>{summary?.orders ?? 0}</strong></div>
         <div><span>Ingresos pagados</span><strong>{formatPrice(summary?.totalRevenue ?? 0)}</strong></div>
       </div>
 
-      {formError && !draft && <p className="admin-form-error" role="alert">{formError}</p>}
-
-      {!draft && (
         <section className="admin-summary-grid" aria-label="Panel de pedidos">
           <div className="admin-card"><span>Pendientes</span><strong>{summary?.pending ?? 0}</strong></div>
           <div className="admin-card"><span>Pagados</span><strong>{summary?.paid ?? 0}</strong></div>
           <div className="admin-card"><span>Inventario</span><strong>{formatPrice(inventoryValue)}</strong></div>
         </section>
-      )}
 
-      {!draft && report && (
+      {report && (
         <section className="admin-reports" aria-labelledby="reports-title">
           <div className="admin-reports__heading">
             <h2 id="reports-title">Reportes</h2>
@@ -523,7 +540,11 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
           </div>
         </section>
       )}
+      </div>
 
+      {formError && !draft && <p className="admin-form-error" role="alert">{formError}</p>}
+
+      <div id="admin-section-products" hidden={activeSection !== 'products'}>
       {draft ? (
         <form className="admin-editor" onSubmit={saveDraft}>
           <div className="admin-editor__heading"><div><p className="eyebrow">Catálogo</p><h2>{draft.id === null ? 'Añadir producto' : 'Editar producto'}</h2></div><button className="admin-icon-button" type="button" onClick={() => { setDraft(null); setFormError('') }} aria-label="Cerrar editor" title="Cerrar editor"><X size={18} /></button></div>
@@ -653,7 +674,11 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
             ))}
             {filteredProducts.length === 0 && <tr><td className="admin-empty" colSpan={4}>No hay productos que coincidan con la búsqueda.</td></tr>}
           </tbody></table></div>
+        </section>
+      )}
+      </div>
 
+          <div id="admin-section-orders" hidden={activeSection !== 'orders'}>
           <div className="admin-order-panel">
             <div className="admin-order-panel__header"><p className="eyebrow">Pedidos</p><h3>Estado de operaciones</h3></div>
             {correoStatus && !correoStatus.configured && <p className="admin-form-error" role="status">Correo Argentino sin configurar. Faltan en el .env del servidor: {correoStatus.missing.join(', ')}.</p>}
@@ -701,7 +726,9 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
               </article>
             )) : <p className="admin-empty">Todavía no hay pedidos registrados.</p>}</div>
           </div>
+          </div>
 
+          <div id="admin-section-settings" hidden={activeSection !== 'settings'}>
           {settings && (
             <form className="admin-settings-panel" onSubmit={(event) => { void saveSettings(event) }}>
               <div className="admin-order-panel__header"><p className="eyebrow">Tienda</p><h3>Envíos y datos legales</h3></div>
@@ -719,11 +746,16 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
               <div className="admin-editor__footer"><button className="button button--coral" type="submit"><Check size={16} aria-hidden="true" /> Guardar configuración</button></div>
             </form>
           )}
+          </div>
 
+          <div id="admin-section-coupons" hidden={activeSection !== 'coupons'}>
           <AdminCoupons />
+          </div>
+          <div id="admin-section-gift-cards" hidden={activeSection !== 'gift-cards'}>
           <AdminGiftCards />
+          </div>
 
-          <section className="admin-newsletter-panel" aria-labelledby="admin-newsletter-title">
+          <section id="admin-section-newsletter" className="admin-newsletter-panel" aria-labelledby="admin-newsletter-title" hidden={activeSection !== 'newsletter'}>
             <div className="admin-order-panel__header"><div><p className="eyebrow">Newsletter</p><h3 id="admin-newsletter-title">Suscriptores <span>({newsletterSubscribers.length})</span></h3></div></div>
             {newsletterSubscribers.length ? <ul className="admin-newsletter-list">
               {newsletterSubscribers.map((subscriber) => (
@@ -735,7 +767,7 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
             </ul> : <p className="admin-empty">Todavía no hay suscriptores.</p>}
           </section>
 
-          <section className="admin-contact-panel" aria-labelledby="admin-contact-title">
+          <section id="admin-section-messages" className="admin-contact-panel" aria-labelledby="admin-contact-title" hidden={activeSection !== 'messages'}>
             <div className="admin-order-panel__header"><div><p className="eyebrow">Contacto</p><h3 id="admin-contact-title">Mensajes <span>({contactMessages.length})</span></h3></div><span className="admin-contact-panel__unread">{contactMessages.filter((message) => !message.isRead).length} sin leer</span></div>
             {contactMessages.length ? <div className="admin-contact-list">
               {contactMessages.map((message) => (
@@ -746,8 +778,6 @@ function ProductAdmin({ products, onSave, onDelete, onClose }: ProductAdminProps
               ))}
             </div> : <p className="admin-empty">Todavía no hay mensajes de contacto.</p>}
           </section>
-        </section>
-      )}
     </section>
   )
 }

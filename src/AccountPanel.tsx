@@ -18,6 +18,13 @@ type AccountPanelProps = {
   onToggleFavorite: (product: Product) => Promise<void>
 }
 
+const accountSections = [
+  { id: 'orders', label: 'Pedidos' },
+  { id: 'addresses', label: 'Direcciones' },
+  { id: 'favorites', label: 'Favoritos' },
+  { id: 'recommendations', label: 'Recomendaciones' },
+] as const
+
 const orderStatusLabel = (status: AccountOrder['status']) => {
   if (status === 'paid') return 'Pagado'
   if (status === 'shipped') return 'Enviado'
@@ -57,6 +64,7 @@ function AccountPanel({ user, authLoading, currency, usdArsRate, orderToOpen, on
   const [addressMessage, setAddressMessage] = useState('')
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(orderToOpen)
   const [summaryError, setSummaryError] = useState('')
+  const [activeSection, setActiveSection] = useState<(typeof accountSections)[number]['id']>('orders')
 
   useEffect(() => {
     if (!user) return
@@ -71,9 +79,9 @@ function AccountPanel({ user, authLoading, currency, usdArsRate, orderToOpen, on
   }, [user])
 
   useEffect(() => {
-    if (orderToOpen === null || selectedOrderId !== orderToOpen || !summary?.orders.some((order) => order.id === orderToOpen)) return
+    if (activeSection !== 'orders' || orderToOpen === null || selectedOrderId !== orderToOpen || !summary?.orders.some((order) => order.id === orderToOpen)) return
     document.getElementById(`account-order-${orderToOpen}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }, [orderToOpen, selectedOrderId, summary])
+  }, [activeSection, orderToOpen, selectedOrderId, summary])
 
   useEffect(() => {
     if (!user) return
@@ -244,9 +252,17 @@ function AccountPanel({ user, authLoading, currency, usdArsRate, orderToOpen, on
         <div className="account-dashboard__actions">{user.isAdmin && <button className="account-admin-link" type="button" onClick={onOpenAdmin}><ShieldCheck size={16} aria-hidden="true" /> Administrar tienda</button>}<button className="account-logout" type="button" onClick={() => { void onLogout() }}><LogOut size={16} aria-hidden="true" /> Cerrar sesión</button></div>
       </header>
 
+      <nav className="dashboard-navigation" aria-label="Secciones de mi cuenta">
+        {accountSections.map((section) => (
+          <button key={section.id} type="button" className={activeSection === section.id ? 'is-active' : ''} aria-pressed={activeSection === section.id} aria-controls={`account-section-${section.id}`} onClick={() => setActiveSection(section.id)}>
+            {section.label}
+          </button>
+        ))}
+      </nav>
+
       {summaryError && <p className="account-error" role="alert">{summaryError}</p>}
 
-      <section className="account-section" aria-labelledby="addresses-title">
+      <section id="account-section-addresses" className="account-section" aria-labelledby="addresses-title" hidden={activeSection !== 'addresses'}>
         <div className="account-section__heading"><div><p className="eyebrow">Entrega</p><h2 id="addresses-title">Mis direcciones</h2></div><MapPin size={20} strokeWidth={1.6} aria-hidden="true" /></div>
         {addresses.length > 0 ? <div className="account-addresses">{addresses.map((address) => (
           <article className="account-address" key={address.id}>
@@ -278,7 +294,7 @@ function AccountPanel({ user, authLoading, currency, usdArsRate, orderToOpen, on
         ) : <button className="account-address__add" type="button" onClick={() => { setAddressDraft({ label: '', name: user.name, phone: user.phone, street: '', city: '', province: '', postalCode: '', isDefault: addresses.length === 0 }); setIsAddressFormOpen(true); setAddressError(''); setAddressMessage('') }}><Plus size={16} aria-hidden="true" /> Agregar dirección</button>}
       </section>
 
-      <section className="account-section" aria-labelledby="orders-title">
+      <section id="account-section-orders" className="account-section" aria-labelledby="orders-title" hidden={activeSection !== 'orders'}>
         <div className="account-section__heading"><div><p className="eyebrow">Seguimiento</p><h2 id="orders-title">Pedidos recientes</h2></div><PackageCheck size={21} strokeWidth={1.6} aria-hidden="true" /></div>
         {summary?.orders.length ? <div className="account-orders">{summary.orders.map((order) => {
           const isOpen = selectedOrderId === order.id
@@ -344,12 +360,12 @@ function AccountPanel({ user, authLoading, currency, usdArsRate, orderToOpen, on
         })}</div> : <p className="account-empty">Todavía no tienes pedidos. Cuando realices uno, aparecerá aquí.</p>}
       </section>
 
-      <section className="account-section" aria-labelledby="favorites-title">
+      <section id="account-section-favorites" className="account-section" aria-labelledby="favorites-title" hidden={activeSection !== 'favorites'}>
         <div className="account-section__heading"><div><p className="eyebrow">Tu selección</p><h2 id="favorites-title">Prendas favoritas</h2></div><Heart size={20} strokeWidth={1.6} aria-hidden="true" /></div>
         {summary?.favorites.length ? <div className="account-product-grid">{summary.favorites.map((product) => renderProduct(product, true))}</div> : <p className="account-empty">Aún no guardaste favoritos. Puedes marcarlos con el corazón en cada prenda.</p>}
       </section>
 
-      <section className="account-section" aria-labelledby="recommendations-title">
+      <section id="account-section-recommendations" className="account-section" aria-labelledby="recommendations-title" hidden={activeSection !== 'recommendations'}>
         <div className="account-section__heading"><div><p className="eyebrow">Para descubrir</p><h2 id="recommendations-title">Recomendaciones</h2></div></div>
         {summary?.recommendations.length ? <div className="account-product-grid">{summary.recommendations.map((product) => renderProduct(product))}</div> : <p className="account-empty">Pronto habrá nuevas prendas para descubrir.</p>}
       </section>

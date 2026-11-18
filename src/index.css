@@ -71,3 +71,9 @@ main:focus { outline: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }.cart-drawer:focus { outline: none; }
+.dashboard-navigation { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 24px; }
+.dashboard-navigation button { min-height: 40px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--brand-blue-deep); font: 600 11px var(--sans); cursor: pointer; }
+.dashboard-navigation button:hover { border-color: var(--brand-blue-deep); }
+.dashboard-navigation button.is-active { border-color: var(--brand-blue-deep); background: var(--brand-blue-deep); color: #fff; }
+.dashboard-navigation button:focus-visible { outline: 3px solid var(--brand-blue); outline-offset: 2px; }
+[id^="account-section-"][hidden], [id^="admin-section-"][hidden] { display: none; }
