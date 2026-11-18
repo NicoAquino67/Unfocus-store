@@ -11,9 +11,9 @@ Ramas: `dev` es la de desarrollo y `main` es la que se despliega en Hostinger.
 - [ ] Elegir Node 22 o superior (necesario para `node:sqlite`).
 - [ ] Build: `npm install && npm run build`. Start: `npm start`.
 - [ ] Confirmar que el HTTPS del dominio está activo.
-- [ ] Crear una carpeta persistente fuera de la app (ej. `/home/USUARIO/unfocus-data`).
-- [ ] Definir `DATABASE_PATH`, `UPLOAD_DIR` e `IDENT_DIR` apuntando a esa carpeta.
-- [ ] Copiar allí las imágenes de `ident/` (no están en git).
+- [ ] Confirmar que `DATABASE_PATH=./data/unfocus.sqlite` se resuelva bajo `$HOME/unfocus-data/data/` y que `UPLOAD_DIR` (si no se configura, `uploads`) se resuelva bajo `$HOME/unfocus-data/uploads/`.
+- [ ] Verificar que Hostinger conserve `$HOME/unfocus-data/` entre redespliegues.
+- [ ] Cargar las fotos reales de los productos desde el panel admin después del despliegue.
 
 ## 2. Variables de entorno (cargar en el panel, nunca en git)
 

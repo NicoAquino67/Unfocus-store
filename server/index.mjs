@@ -34,7 +34,6 @@ const resolveStoragePath = (configuredPath, defaultPath) => {
 
 const databasePath = resolveStoragePath(process.env.DATABASE_PATH, path.join('data', 'unfocus.sqlite'))
 const uploadDirectory = resolveStoragePath(process.env.UPLOAD_DIR, 'uploads')
-const identDirectory = process.env.IDENT_DIR ? path.resolve(process.env.IDENT_DIR) : path.join(projectDirectory, 'ident')
 const sessionCookieName = 'unfocus_session'
 const sessionLifetimeMs = 1000 * 60 * 60 * 24 * 14
 const maximumImageBytes = 4 * 1024 * 1024
@@ -726,7 +725,7 @@ app.post('/mcp', (request, response) => applyRateLimit(request, response, () => 
 app.get('/mcp', (_request, response) => response.setHeader('Allow', 'POST').status(405).json({ error: 'El servidor MCP solo acepta solicitudes POST.' }))
 
 app.use('/uploads', express.static(uploadDirectory, { maxAge: '1y', immutable: true, fallthrough: false }))
-app.use('/ident', express.static(identDirectory, { maxAge: '1d' }))
+if (!isProduction) app.use('/ident', express.static(path.join(projectDirectory, 'ident'), { maxAge: '1d' }))
 
 app.use('/api', (request, response, next) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) {

@@ -77,7 +77,7 @@ ARS es la moneda base de catálogo, administración y pedidos. Si `USD_ARS_RATE`
 ## Persistencia y despliegue
 
 - SQLite: `data/unfocus.sqlite` en desarrollo; en producción, los paths relativos de `DATABASE_PATH` se guardan bajo `$HOME/unfocus-data/`, fuera de los directorios reemplazados en cada despliegue. Los paths absolutos configurados se respetan.
-- Imágenes subidas desde el panel: `uploads/` en desarrollo; en producción, los paths relativos de `UPLOAD_DIR` se guardan bajo `$HOME/unfocus-data/`. Las imágenes semilla están en `ident/` (fuera de Git, se puede cambiar con `IDENT_DIR`).
+- Imágenes subidas desde el panel: los archivos se guardan en `uploads/` (o en `UPLOAD_DIR`) y SQLite guarda sus rutas; no se almacenan dentro de la base de datos. En producción, los paths relativos de `UPLOAD_DIR` se guardan bajo `$HOME/unfocus-data/`. Las imágenes de `ident/` son solo de prueba/desarrollo y no se sirven en producción; cargar las fotos reales desde el panel admin después del despliegue.
 - `.env`, la base de datos y las imágenes subidas están excluidos de Git.
 - Para producción, configura `NODE_ENV=production`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, almacenamiento persistente y HTTPS; ejecuta `npm run build` y luego `npm start`.
 
@@ -129,6 +129,6 @@ Comprobaciones locales: `npm run build` y `npm run lint`.
 ## Lista de pendientes
 
 
-Estado actual: MVP funcional y base de datos reiniciada (solo cuenta admin y catálogo con 10 unidades por prenda). Antes de vender hay que definir `MP_WEBHOOK_SECRET`, cargar datos bancarios y legales en el admin, probar pagos reales y desplegar las imágenes de `ident/`. Detalle en [`todo`](./todo).
+Estado actual: MVP funcional y base de datos reiniciada (solo cuenta admin y catálogo con 10 unidades por prenda). Antes de vender hay que definir `MP_WEBHOOK_SECRET`, cargar datos bancarios y legales en el admin, probar pagos reales y cargar las fotos de producto desde el panel admin. Detalle en [`todo`](./todo).
 
 Ver el archivo [`todo`](./todo): checklist del MVP y comparativa con tiendas como nike.com.
