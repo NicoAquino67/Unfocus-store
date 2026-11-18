@@ -8,10 +8,11 @@ Ramas: `dev` es la de desarrollo y `main` es la que se despliega en Hostinger.
 
 - [ ] Crear el subdominio de prueba (`dev.unfocus.shop`) o usar `unfocus.shop` directamente.
 - [ ] Crear la Node.js Web App conectada a la rama `main` del repo `NicoAquino67/Unfocus-store`.
-- [ ] Elegir Node 22 o superior (necesario para `node:sqlite`).
+- [ ] Elegir Node 22 o superior.
 - [ ] Build: `npm install && npm run build`. Start: `npm start`.
 - [ ] Confirmar que el HTTPS del dominio está activo.
-- [ ] Confirmar que `DATABASE_PATH=./data/unfocus.sqlite` se resuelva bajo `$HOME/unfocus-data/data/` y que `UPLOAD_DIR` (si no se configura, `uploads`) se resuelva bajo `$HOME/unfocus-data/uploads/`.
+- [ ] Configurar la base MySQL de Hostinger y las variables `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` y `DB_PASSWORD`; preparar el esquema antes de arrancar la API.
+- [ ] Confirmar que `UPLOAD_DIR` (si no se configura, `uploads`) se resuelva bajo `$HOME/unfocus-data/uploads/`.
 - [ ] Verificar que Hostinger conserve `$HOME/unfocus-data/` entre redespliegues.
 - [ ] Cargar las fotos reales de los productos desde el panel admin después del despliegue.
 

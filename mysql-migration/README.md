@@ -1,8 +1,9 @@
 # Esquema y migración aislada de productos
 
-Este componente **no adapta ni conecta el servidor a MySQL**. `server/index.mjs`
-continúa usando SQLite. No ejecuta nada automáticamente y no modifica, elimina
-ni respalda el SQLite de origen.
+El backend local usa MySQL/MariaDB mediante `server/mysql.mjs`, configurado con
+`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` y `DB_PASSWORD`. La base debe tener
+el esquema antes de iniciar la aplicación. El migrador no se ejecuta automáticamente y no modifica,
+elimina ni respalda el SQLite de origen.
 
 `schema.sql` contiene las 17 tablas actuales, sus claves e índices, para
 InnoDB. El migrador crea ese esquema e importa **solo `products`**: conserva
@@ -69,6 +70,11 @@ los archivos no hace que esas URLs sean accesibles.
   La base debe terminar en `test` o `prueba` y contener los productos importados
   desde `data\unfocus.sqlite`; la prueba no la vacía ni borra pedidos.
 - `npm test` y `npm run lint`: pruebas y lint existentes.
+- Para integrar el backend, crear una base local vacía dedicada llamada
+  `unfocus_integration_test`, configurar `DB_HOST=127.0.0.1`, `DB_PORT`,
+  `DB_NAME=unfocus_integration_test`, `DB_USER`, `DB_PASSWORD` y
+  `UNFOCUS_MYSQL_INTEGRATION=1`, y ejecutar `npm test`. La prueba crea el
+  esquema y datos de prueba; se niega a ejecutarse si ya contiene tablas.
 
 Validación realizada: MariaDB 11.8.9, base de prueba inicialmente vacía;
 17 tablas y 3 productos locales importados; comparación de todos los campos,
@@ -80,7 +86,6 @@ pasaron. La base de prueba conserva el esquema y los productos importados.
 No se ha probado MySQL Oracle ni otra versión de MariaDB. El esquema usa
 valores predeterminados de texto con expresiones, disponibles en MySQL 8.0.13+
 y comprobados en MariaDB 11.8.9; colaciones, límites y comportamiento de
-consultas deben validarse contra el motor real. El backend sigue necesitando
-una adaptación completa y pruebas transaccionales antes de utilizarlo con
-MySQL/MariaDB. No se ha accedido a datos ni credenciales de producción, ni
-desplegado o reiniciado la aplicación.
+consultas deben validarse contra el motor real. Las pruebas del backend incluyen
+MariaDB local y pagos simulados; verificar el esquema y los datos de destino
+antes de cambiar el sitio.

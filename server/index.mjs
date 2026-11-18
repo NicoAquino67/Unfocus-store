@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID, scrypt, createHash, createHmac, timingSafeEqual } from 'node:crypto'
-import { DatabaseSync } from 'node:sqlite'
+import { createMysqlDatabase } from './mysql.mjs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,6 +9,7 @@ import { MercadoPagoConfig, Preference } from 'mercadopago'
 import nodemailer from 'nodemailer'
 import { CorreoArgentinoError, buildOrderPayload, createCorreoArgentinoClient, readCorreoArgentinoConfig } from './correoArgentino.mjs'
 import { MiCorreoError, buildDimensions, buildImportPayload, createMiCorreoClient, readMiCorreoConfig } from './miCorreo.mjs'
+import { paymentAttemptUpsertSql } from './paymentAttemptSql.mjs'
 import { buildLlmsTxt, buildMarkdownPage, buildMcpServerCard, buildHomepageJsonLd, buildRobotsTxt, buildSitemapXml, injectAgentContent, injectImagePreload, injectProductMeta, injectSiteMeta, renderAgentContent } from './seo.mjs'
 
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url))
@@ -32,274 +33,16 @@ const resolveStoragePath = (configuredPath, defaultPath) => {
   return path.resolve(persistentDataDirectory, storagePath)
 }
 
-const databasePath = resolveStoragePath(process.env.DATABASE_PATH, path.join('data', 'unfocus.sqlite'))
 const uploadDirectory = resolveStoragePath(process.env.UPLOAD_DIR, 'uploads')
 const sessionCookieName = 'unfocus_session'
 const sessionLifetimeMs = 1000 * 60 * 60 * 24 * 14
 const maximumImageBytes = 4 * 1024 * 1024
 const sizes = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL']
 
-await mkdir(path.dirname(databasePath), { recursive: true })
 await mkdir(uploadDirectory, { recursive: true })
 
-const database = new DatabaseSync(databasePath)
-database.exec(`
-  PRAGMA foreign_keys = ON;
-  PRAGMA journal_mode = WAL;
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    phone TEXT NOT NULL DEFAULT '',
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'customer' CHECK (role IN ('customer', 'admin')),
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE TABLE IF NOT EXISTS sessions (
-    token_hash TEXT PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    expires_at INTEGER NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE TABLE IF NOT EXISTS products (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    slug TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    category TEXT NOT NULL,
-    price_ars INTEGER NOT NULL CHECK (price_ars > 0),
-    garment_cost_ars INTEGER NOT NULL DEFAULT 0 CHECK (garment_cost_ars >= 0),
-    logistics_cost_ars INTEGER NOT NULL DEFAULT 0 CHECK (logistics_cost_ars >= 0),
-    production_cost_ars INTEGER NOT NULL DEFAULT 0 CHECK (production_cost_ars >= 0),
-    tax_percent REAL NOT NULL DEFAULT 0 CHECK (tax_percent >= 0 AND tax_percent < 100),
-    profit_percent REAL NOT NULL DEFAULT 0 CHECK (profit_percent >= 0),
-    stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
-    stock_by_size TEXT NOT NULL DEFAULT '{}',
-    composition TEXT NOT NULL,
-    features_json TEXT NOT NULL DEFAULT '[]',
-    description TEXT NOT NULL,
-    design_description TEXT NOT NULL,
-    front_image TEXT NOT NULL,
-    front_alt TEXT NOT NULL,
-    back_image TEXT NOT NULL,
-    back_alt TEXT NOT NULL,
-    badge TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE TABLE IF NOT EXISTS favorites (
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, product_id)
-  );
-  CREATE TABLE IF NOT EXISTS orders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    reference TEXT NOT NULL UNIQUE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    total_ars INTEGER NOT NULL CHECK (total_ars >= 0),
-    status TEXT NOT NULL DEFAULT 'pending_payment',
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE TABLE IF NOT EXISTS order_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-    product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
-    product_name TEXT NOT NULL,
-    product_slug TEXT NOT NULL,
-    image_url TEXT NOT NULL,
-    size TEXT NOT NULL,
-    quantity INTEGER NOT NULL CHECK (quantity > 0),
-    unit_price_ars INTEGER NOT NULL CHECK (unit_price_ars > 0)
-  );
-  CREATE TABLE IF NOT EXISTS notifications (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL DEFAULT 'system',
-    title TEXT NOT NULL,
-    message TEXT NOT NULL,
-    is_read INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE TABLE IF NOT EXISTS product_reviews (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
-    comment TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(product_id, user_id)
-  );
-  CREATE TABLE IF NOT EXISTS password_reset_tokens (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token_hash TEXT NOT NULL UNIQUE,
-    expires_at INTEGER NOT NULL,
-    used_at INTEGER,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE TABLE IF NOT EXISTS newsletter_subscribers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE TABLE IF NOT EXISTS contact_messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT NOT NULL,
-    subject TEXT NOT NULL,
-    message TEXT NOT NULL,
-    is_read INTEGER NOT NULL DEFAULT 0,
-    email_sent INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id);
-  CREATE INDEX IF NOT EXISTS orders_user_id_idx ON orders(user_id, created_at DESC);
-  CREATE INDEX IF NOT EXISTS notifications_user_id_idx ON notifications(user_id, is_read, created_at DESC);
-  CREATE INDEX IF NOT EXISTS contact_messages_created_at_idx ON contact_messages(created_at DESC);
-`)
-
-const runSchemaMigration = () => {
-  const columns = new Map()
-  for (const row of database.prepare('PRAGMA table_info(products)').all()) columns.set(row.name, true)
-  const orderColumns = new Set(database.prepare('PRAGMA table_info(orders)').all().map((row) => row.name))
-const userColumns = new Set(database.prepare('PRAGMA table_info(users)').all().map((row) => row.name))
-  const notificationColumns = new Set(database.prepare('PRAGMA table_info(notifications)').all().map((row) => row.name))
-  const orderColumnDefinitions = {
-    payment_url: 'TEXT',
-    shipping_cost_ars: 'INTEGER NOT NULL DEFAULT 0',
-    shipping_method: "TEXT NOT NULL DEFAULT 'delivery'",
-    shipping_name: 'TEXT',
-    shipping_phone: 'TEXT',
-    shipping_street: 'TEXT',
-    shipping_city: 'TEXT',
-    shipping_province: 'TEXT',
-    shipping_postal_code: 'TEXT',
-    shipping_notes: 'TEXT',
-    carrier: 'TEXT',
-    tracking_code: 'TEXT',
-    tracking_url: 'TEXT',
-    shipped_at: 'TEXT',
-    ca_tracking_number: 'TEXT',
-    mc_imported_at: 'TEXT',
-    payment_method: "TEXT NOT NULL DEFAULT 'mercadopago'",
-    coupon_code: "TEXT NOT NULL DEFAULT ''",
-    discount_ars: 'INTEGER NOT NULL DEFAULT 0',
-    gift_card_code: "TEXT NOT NULL DEFAULT ''",
-    gift_card_ars: 'INTEGER NOT NULL DEFAULT 0',
-  }
-  for (const [column, definition] of Object.entries(orderColumnDefinitions)) {
-    if (!orderColumns.has(column)) database.exec(`ALTER TABLE orders ADD COLUMN ${column} ${definition}`)
-  }
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS gift_cards (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      code TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      initial_ars INTEGER NOT NULL CHECK (initial_ars > 0),
-      balance_ars INTEGER NOT NULL CHECK (balance_ars >= 0),
-      order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-  `)
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS coupons (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      code TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      type TEXT NOT NULL CHECK (type IN ('percent', 'fixed')),
-      value INTEGER NOT NULL CHECK (value > 0),
-      min_subtotal_ars INTEGER NOT NULL DEFAULT 0,
-      max_uses INTEGER NOT NULL DEFAULT 0,
-      uses INTEGER NOT NULL DEFAULT 0,
-      expires_at TEXT,
-      active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-  `)
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS payment_attempts (
-      payment_id TEXT PRIMARY KEY,
-      order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-      status TEXT NOT NULL,
-      status_detail TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS payment_attempts_order_id_idx ON payment_attempts(order_id);
-  `)
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS saved_addresses (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      label TEXT NOT NULL,
-      name TEXT NOT NULL,
-      phone TEXT NOT NULL,
-      street TEXT NOT NULL,
-      city TEXT NOT NULL,
-      province TEXT NOT NULL,
-      postal_code TEXT NOT NULL,
-      is_default INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS saved_addresses_user_id_idx ON saved_addresses(user_id, is_default DESC, id DESC);
-    CREATE TABLE IF NOT EXISTS restock_subscriptions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-      size TEXT NOT NULL,
-      email TEXT NOT NULL COLLATE NOCASE,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(product_id, size, email)
-    );
-    CREATE INDEX IF NOT EXISTS restock_subscriptions_product_size_idx ON restock_subscriptions(product_id, size);
-  `)
-  if (!columns.has('stock')) database.exec('ALTER TABLE products ADD COLUMN stock INTEGER NOT NULL DEFAULT 0')
-  if (!userColumns.has('is_guest')) database.exec('ALTER TABLE users ADD COLUMN is_guest INTEGER NOT NULL DEFAULT 0')
-  if (!columns.has('is_gift_card')) database.exec('ALTER TABLE products ADD COLUMN is_gift_card INTEGER NOT NULL DEFAULT 0')
-  if (!columns.has('discount_type')) database.exec("ALTER TABLE products ADD COLUMN discount_type TEXT NOT NULL DEFAULT 'none'")
-  if (!columns.has('discount_value')) database.exec('ALTER TABLE products ADD COLUMN discount_value INTEGER NOT NULL DEFAULT 0')
-  if (!columns.has('extra_images')) database.exec("ALTER TABLE products ADD COLUMN extra_images TEXT NOT NULL DEFAULT '[]'")
-  if (!columns.has('stock_by_size')) database.exec("ALTER TABLE products ADD COLUMN stock_by_size TEXT NOT NULL DEFAULT '{}' ")
-  if (!columns.has('garment_cost_ars')) database.exec('ALTER TABLE products ADD COLUMN garment_cost_ars INTEGER NOT NULL DEFAULT 0')
-  if (!columns.has('logistics_cost_ars')) database.exec('ALTER TABLE products ADD COLUMN logistics_cost_ars INTEGER NOT NULL DEFAULT 0')
-  if (!columns.has('production_cost_ars')) database.exec('ALTER TABLE products ADD COLUMN production_cost_ars INTEGER NOT NULL DEFAULT 0')
-  if (!columns.has('tax_percent')) database.exec('ALTER TABLE products ADD COLUMN tax_percent REAL NOT NULL DEFAULT 0')
-  if (!columns.has('profit_percent')) database.exec('ALTER TABLE products ADD COLUMN profit_percent REAL NOT NULL DEFAULT 0')
-  if (!columns.has('colors_json')) database.exec("ALTER TABLE products ADD COLUMN colors_json TEXT NOT NULL DEFAULT '[]'")
-  if (!notificationColumns.has('order_id')) database.exec('ALTER TABLE notifications ADD COLUMN order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL')
-  database.exec(`
-    UPDATE notifications
-    SET order_id = (
-      SELECT orders.id
-      FROM orders
-      WHERE orders.user_id = notifications.user_id
-        AND instr(notifications.message, orders.reference) > 0
-      ORDER BY orders.id DESC
-      LIMIT 1
-    )
-    WHERE order_id IS NULL
-      AND EXISTS (
-        SELECT 1
-        FROM orders
-        WHERE orders.user_id = notifications.user_id
-          AND instr(notifications.message, orders.reference) > 0
-      );
-    CREATE INDEX IF NOT EXISTS notifications_order_id_idx ON notifications(order_id);
-  `)
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS product_reviews (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
-      comment TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(product_id, user_id)
-    );
-  `)
-  const legacyStockUpdate = database.prepare("UPDATE products SET stock = COALESCE(stock, 0), stock_by_size = COALESCE(stock_by_size, '{}') WHERE stock IS NULL OR stock_by_size IS NULL")
-  legacyStockUpdate.run()
-}
-
-runSchemaMigration()
-database.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(Date.now())
+const database = createMysqlDatabase()
+await database.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(Date.now())
 
 const hashPassword = async (password) => {
   const salt = randomBytes(16).toString('hex')
@@ -322,9 +65,9 @@ const verifyPassword = async (password, savedHash) => {
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex')
 
-const createNotification = (userId, kind, title, message, orderId = null) => {
+const createNotification = async (userId, kind, title, message, orderId = null) => {
   if (!userId) return
-  database.prepare('INSERT INTO notifications (user_id, kind, title, message, order_id) VALUES (?, ?, ?, ?, ?)').run(userId, kind, title, message, orderId)
+  await database.prepare('INSERT INTO notifications (user_id, kind, title, message, order_id) VALUES (?, ?, ?, ?, ?)').run(userId, kind, title, message, orderId)
 }
 
 const nonNegativeIntegerFromEnv = (name) => {
@@ -349,9 +92,8 @@ const envSettingDefaults = {
   transferAlias: '',
   transferTaxId: '',
 }
-database.exec('CREATE TABLE IF NOT EXISTS store_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
 const storeSettings = { ...envSettingDefaults }
-for (const row of database.prepare('SELECT key, value FROM store_settings').all()) {
+for (const row of (await database.prepare('SELECT `key`, value FROM store_settings').all())) {
   if (settingKeys.includes(row.key)) storeSettings[row.key] = integerSettingKeys.has(row.key) ? Number(row.value) || 0 : row.value
 }
 
@@ -419,18 +161,18 @@ const sendMail = async ({ to, subject, text, replyTo, fromName = 'UnFocus' }) =>
 }
 
 const notifyRestockedCustomers = async (productId, productName, stockBySize) => {
-  const productSlug = database.prepare('SELECT slug FROM products WHERE id = ?').get(productId)?.slug
+  const productSlug = (await database.prepare('SELECT slug FROM products WHERE id = ?').get(productId))?.slug
   const productUrl = `${publicBaseUrl.replace(/\/+$/, '')}/?producto=${encodeURIComponent(productSlug ?? '')}`
   for (const [size, quantity] of Object.entries(stockBySize)) {
     if (Number(quantity) <= 0) continue
-    const subscriptions = database.prepare('SELECT id, email FROM restock_subscriptions WHERE product_id = ? AND size = ?').all(productId, size)
+    const subscriptions = (await database.prepare('SELECT id, email FROM restock_subscriptions WHERE product_id = ? AND size = ?').all(productId, size))
     for (const subscription of subscriptions) {
       const sent = await sendMail({
         to: subscription.email,
         subject: `${productName} volvió a tener stock`,
         text: `¡Buenas noticias! ${productName}, talle ${size}, volvió a estar disponible.\n\nVisita la tienda para ver la prenda: ${productUrl}`,
       })
-      if (sent) database.prepare('DELETE FROM restock_subscriptions WHERE id = ?').run(subscription.id)
+      if (sent) await database.prepare('DELETE FROM restock_subscriptions WHERE id = ?').run(subscription.id)
       else console.warn('Restock notification email could not be delivered; subscription retained.', { productId, size })
     }
   }
@@ -443,17 +185,16 @@ const shippingSummary = (order) => order.shipping_method === 'digital'
   ? `Retiro en persona${storeSettings.pickupAddress ? `: ${storeSettings.pickupAddress}` : ''}`
   : `Envío a domicilio: ${[order.shipping_street, order.shipping_city, order.shipping_province, order.shipping_postal_code].filter(Boolean).join(', ')}`
 
-const giftCardLines = (orderId) => {
-  const cards = database.prepare('SELECT code, initial_ars FROM gift_cards WHERE order_id = ? ORDER BY id').all(orderId)
+const giftCardLines = async (orderId) => {
+  const cards = (await database.prepare('SELECT code, initial_ars FROM gift_cards WHERE order_id = ? ORDER BY id').all(orderId))
   if (!cards.length) return ''
   return `Tu tarjeta de regalo${cards.length > 1 ? 's' : ''} (canjeable${cards.length > 1 ? 's' : ''} en el checkout, sin vencimiento):\n${cards.map((card) => `- ${card.code} · ${formatArs(card.initial_ars)}`).join('\n')}\n\n`
 }
 
 const sendOrderEmail = async (orderId, kind) => {
-  const order = database.prepare('SELECT o.*, u.name AS user_name, u.email AS user_email FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id = ?').get(orderId)
+  const order = (await database.prepare('SELECT o.*, u.name AS user_name, u.email AS user_email FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id = ?').get(orderId))
   if (!order) return false
-  if (kind === 'paid') issueGiftCards(orderId)
-  const items = database.prepare('SELECT oi.product_name, oi.size, oi.quantity, oi.unit_price_ars, COALESCE(p.is_gift_card, 0) AS is_gift_card FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?').all(orderId)
+  const items = (await database.prepare('SELECT oi.product_name, oi.size, oi.quantity, oi.unit_price_ars, COALESCE(p.is_gift_card, 0) AS is_gift_card FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?').all(orderId))
   const itemLines = items.map((item) => `- ${item.quantity} × ${item.product_name} (${item.is_gift_card ? 'tarjeta' : `talle ${item.size}`}): ${formatArs(item.unit_price_ars * item.quantity)}`).join('\n')
   const totals = `${order.discount_ars ? `Descuento (${order.coupon_code}): -${formatArs(order.discount_ars)}\n` : ''}${order.gift_card_ars ? `Pagado con tarjeta de regalo: -${formatArs(order.gift_card_ars)}\n` : ''}Envío: ${order.shipping_cost_ars ? formatArs(order.shipping_cost_ars) : 'Sin cargo'}\nTotal: ${formatArs(order.total_ars)}`
   const greeting = `Hola ${order.user_name.split(' ')[0]},`
@@ -469,7 +210,7 @@ const sendOrderEmail = async (orderId, kind) => {
     body = `${greeting}\n\nRegistramos tu pedido ${order.reference}. Está pendiente de pago${order.status === 'pending_payment' ? ` y se cancelará automáticamente si no se completa en ${pendingOrderExpiryDays} días` : ''}.\n\n${itemLines}\n${totals}\n\n${shippingSummary(order)}\n\n${transferLines}`
   } else if (kind === 'paid') {
     subject = `Recibimos tu pago · Pedido ${order.reference}`
-    body = `${greeting}\n\nConfirmamos el pago de tu pedido ${order.reference}.\n\n${itemLines}\n${totals}\n\n${shippingSummary(order)}\n\n${giftCardLines(orderId)}Te avisaremos por correo cuando lo despachemos.`
+    body = `${greeting}\n\nConfirmamos el pago de tu pedido ${order.reference}.\n\n${itemLines}\n${totals}\n\n${shippingSummary(order)}\n\n${(await giftCardLines(orderId))}Te avisaremos por correo cuando lo despachemos.`
   } else if (kind === 'shipped') {
     subject = `Tu pedido ${order.reference} ya fue despachado`
     const tracking = [order.carrier && `Transporte: ${order.carrier}`, order.tracking_code && `Código de seguimiento: ${order.tracking_code}`, order.tracking_url && `Seguimiento: ${order.tracking_url}`].filter(Boolean).join('\n')
@@ -497,10 +238,10 @@ const parseCookies = (header = '') => Object.fromEntries(header.split(';').map((
   return [part.slice(0, separator).trim(), decodeURIComponent(part.slice(separator + 1).trim())]
 }))
 
-const createSession = (response, userId) => {
+const createSession = async (response, userId) => {
   const token = randomBytes(32).toString('base64url')
   const expiresAt = Date.now() + sessionLifetimeMs
-  database.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(sha256(token), userId, expiresAt)
+  await database.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(sha256(token), userId, expiresAt)
   response.cookie(sessionCookieName, token, {
     httpOnly: true,
     secure: secureCookies,
@@ -578,7 +319,7 @@ const allProducts = database.prepare(`${productSelect} ORDER BY p.id`)
 const seedExtraImages = (product) => product.gallery.slice(2).map((image) => ({ src: image.src, alt: image.alt }))
 
 const insertSeedProducts = async () => {
-  if (database.prepare('SELECT COUNT(*) AS count FROM products').get().count > 0) return
+  if ((await database.prepare('SELECT COUNT(*) AS count FROM products').get()).count > 0) return
   const seed = JSON.parse(await readFile(path.join(serverDirectory, 'seed-products.json'), 'utf8'))
   const insert = database.prepare(`
     INSERT INTO products (id, slug, name, category, price_ars, stock, stock_by_size, composition, features_json, description, design_description, front_image, front_alt, back_image, back_alt, badge, extra_images)
@@ -587,7 +328,7 @@ const insertSeedProducts = async () => {
   for (const product of seed) {
     const stockBySize = product.stockBySize && typeof product.stockBySize === 'object' ? product.stockBySize : Object.fromEntries(sizes.map((size) => [size, 0]))
     const totalStock = Object.values(stockBySize).reduce((sum, value) => sum + Number(value || 0), 0)
-    insert.run(product.id, product.slug, product.name, product.category, product.price, totalStock, JSON.stringify(stockBySize), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.gallery[0].src, product.gallery[0].alt, product.gallery[1].src, product.gallery[1].alt, product.badge ?? '', JSON.stringify(seedExtraImages(product)))
+    await insert.run(product.id, product.slug, product.name, product.category, product.price, totalStock, JSON.stringify(stockBySize), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.gallery[0].src, product.gallery[0].alt, product.gallery[1].src, product.gallery[1].alt, product.badge ?? '', JSON.stringify(seedExtraImages(product)))
   }
 }
 
@@ -597,13 +338,13 @@ const bootstrapAdministrator = async () => {
   if (!email || !password) return
   if (password.length < 14) throw new Error('ADMIN_PASSWORD debe tener al menos 14 caracteres.')
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('ADMIN_EMAIL no es una dirección válida.')
-  const existing = database.prepare('SELECT id FROM users WHERE email = ?').get(email)
+  const existing = (await database.prepare('SELECT id FROM users WHERE email = ?').get(email))
   if (existing) {
-    database.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(existing.id)
+    await database.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(existing.id)
     return
   }
   const passwordHash = await hashPassword(password)
-  database.prepare("INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'admin')")
+  await database.prepare("INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'admin')")
     .run(process.env.ADMIN_NAME?.trim() || 'UnFocus Admin', email, passwordHash)
 }
 
@@ -613,20 +354,20 @@ await insertSeedProducts()
 const backfillSeedImages = async () => {
   const seed = JSON.parse(await readFile(path.join(serverDirectory, 'seed-products.json'), 'utf8'))
   const update = database.prepare("UPDATE products SET extra_images = ? WHERE slug = ? AND extra_images = '[]'")
-  for (const product of seed.products ?? seed) update.run(JSON.stringify(seedExtraImages(product)), product.slug)
+  for (const product of seed.products ?? seed) await update.run(JSON.stringify(seedExtraImages(product)), product.slug)
 }
 await backfillSeedImages()
 
 // La tarjeta de regalo es un producto especial: su "talle" es el monto en ARS y no tiene stock.
-const ensureGiftCardProduct = () => {
-  if (database.prepare('SELECT id FROM products WHERE is_gift_card = 1').get()) return
+const ensureGiftCardProduct = async () => {
+  if ((await database.prepare('SELECT id FROM products WHERE is_gift_card = 1').get())) return
   const images = ['/gifts/tarjeta-1.svg', '/gifts/tarjeta-2.svg', '/gifts/tarjeta-3.svg']
-  database.prepare(`
+  await database.prepare(`
     INSERT INTO products (slug, name, category, price_ars, stock, stock_by_size, composition, features_json, description, design_description, front_image, front_alt, back_image, back_alt, badge, extra_images, is_gift_card)
     VALUES ('tarjeta-de-regalo', 'Tarjeta de regalo', 'Regalos', ?, 0, '{}', 'Saldo digital', '[]', 'Regala libertad de elegir: recibes un código con el saldo que quieras para usar en cualquier compra de UnFocus.', 'Elige un monto entre $30.000 y $1.000.000. El código llega por correo apenas se confirma el pago y no vence.', ?, 'Tarjeta de regalo UnFocus', ?, 'Tarjeta de regalo UnFocus, versión oscura', 'REGALO', ?, 1)
   `).run(giftCardMinimumArs, images[0], images[1], JSON.stringify([{ src: images[2], alt: 'Tarjeta de regalo UnFocus, versión coral' }]))
 }
-ensureGiftCardProduct()
+await ensureGiftCardProduct()
 await bootstrapAdministrator()
 
 const app = express()
@@ -647,7 +388,7 @@ const applyRateLimit = (request, response, next, maxRequests = 20, windowMs = 60
   if (attempts.length >= maxRequests) return response.status(429).json({ error: 'Demasiados intentos. Inténtalo más tarde.' })
   attempts.push(now)
   rateLimitStore.set(key, attempts)
-  next()
+  return next()
 }
 
 app.disable('x-powered-by')
@@ -680,7 +421,7 @@ const mcpTools = [{
   },
 }]
 
-app.post('/mcp', (request, response) => applyRateLimit(request, response, () => {
+app.post('/mcp', (request, response) => applyRateLimit(request, response, async () => {
   const message = request.body
   if (!message || typeof message !== 'object' || Array.isArray(message) || message.jsonrpc !== '2.0' || typeof message.method !== 'string') {
     return response.status(400).json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Solicitud JSON-RPC inválida.' } })
@@ -708,7 +449,7 @@ app.post('/mcp', (request, response) => applyRateLimit(request, response, () => 
     if (query !== undefined && (typeof query !== 'string' || query.length > 120)) return fail(-32602, 'El texto de búsqueda no es válido.')
     const normalizedQuery = String(query ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es').trim()
     const seoBaseUrl = publicBaseUrl.replace(/\/$/, '')
-    const products = allProducts.all().map(productFromRow)
+    const products = (await allProducts.all()).map(productFromRow)
       .filter((product) => !normalizedQuery || `${product.name} ${product.category} ${product.description}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es').includes(normalizedQuery))
       .slice(0, 20)
       .map((product) => ({
@@ -748,16 +489,16 @@ app.use('/api', (request, response, next) => {
   next()
 })
 
-app.use('/api', (request, _response, next) => {
+app.use('/api', async (request, _response, next) => {
   const token = parseCookies(request.headers.cookie)[sessionCookieName]
   if (token) {
-    const session = database.prepare(`
+    const session = (await database.prepare(`
       SELECT u.id, u.name, u.email, u.phone, u.role
       FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token_hash = ? AND s.expires_at > ?
-    `).get(sha256(token), Date.now())
+    `).get(sha256(token), Date.now()))
     if (session) request.user = session
-    else database.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(token))
+    else await database.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(token))
   }
   next()
 })
@@ -794,7 +535,7 @@ const limitRestockRequests = (request, response, next) => {
 }
 
 // Permite comprar sin cuenta: crea (o reutiliza) un usuario "invitado" que no puede iniciar sesión.
-const resolveCheckoutUser = (request, response, next) => {
+const resolveCheckoutUser = async (request, response, next) => {
   if (request.user) return next()
   const guest = request.body?.guest
   const name = typeof guest?.name === 'string' ? guest.name.trim() : ''
@@ -803,11 +544,11 @@ const resolveCheckoutUser = (request, response, next) => {
   if (!guest) return response.status(401).json({ error: 'Inicia sesión o continúa como invitado para comprar.' })
   if (name.length < 2 || name.length > 80) return response.status(400).json({ error: 'Escribe tu nombre para continuar como invitado.' })
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return response.status(400).json({ error: 'Escribe un correo válido para recibir la confirmación.' })
-  const existing = database.prepare('SELECT id, is_guest FROM users WHERE email = ?').get(email)
+  const existing = (await database.prepare('SELECT id, is_guest FROM users WHERE email = ?').get(email))
   if (existing && !existing.is_guest) return response.status(409).json({ error: 'Ese correo ya tiene una cuenta. Inicia sesión para continuar.' })
   let userId = existing?.id
-  if (userId) database.prepare('UPDATE users SET name = ?, phone = ? WHERE id = ?').run(name, phone, userId)
-  else userId = Number(database.prepare("INSERT INTO users (name, email, phone, password_hash, is_guest) VALUES (?, ?, ?, 'guest', 1)").run(name, email, phone).lastInsertRowid)
+  if (userId) await database.prepare('UPDATE users SET name = ?, phone = ? WHERE id = ?').run(name, phone, userId)
+  else userId = Number((await database.prepare("INSERT INTO users (name, email, phone, password_hash, is_guest) VALUES (?, ?, ?, 'guest', 1)").run(name, email, phone)).lastInsertRowid)
   request.user = { id: userId, name, email, phone, role: 'customer', isGuest: true }
   limitAuthAttempts(request, response, next)
 }
@@ -848,19 +589,19 @@ app.get('/api/config', async (_request, response) => {
   }
 })
 
-app.get('/api/products', (_request, response) => {
-  response.json({ products: allProducts.all().map(productFromRow) })
+app.get('/api/products', async (_request, response) => {
+  response.json({ products: (await allProducts.all()).map(productFromRow) })
 })
 
-app.get('/api/products/:slug', (request, response) => {
-  const product = selectProductBySlug.get(request.params.slug)
+app.get('/api/products/:slug', async (request, response) => {
+  const product = (await selectProductBySlug.get(request.params.slug))
   if (!product) return response.status(404).json({ error: 'Producto no encontrado.' })
   response.json({ product: productFromRow(product) })
 })
 
 const sessionDurationSeconds = Math.floor(sessionLifetimeMs / 1000)
-const createUserSession = (request, response, user) => {
-  createSession(response, user.id)
+const createUserSession = async (request, response, user) => {
+  await createSession(response, user.id)
   request.user = user
   response.json({ user: publicUser(user) })
 }
@@ -872,13 +613,13 @@ app.get('/api/auth/me', (request, response) => {
 app.post('/api/auth/request-password-reset', async (request, response) => {
   const email = typeof request.body.email === 'string' ? request.body.email.trim().toLowerCase() : ''
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return response.status(400).json({ error: 'Escribe un correo válido.' })
-  const user = database.prepare('SELECT id FROM users WHERE email = ?').get(email)
+  const user = (await database.prepare('SELECT id FROM users WHERE email = ?').get(email))
   if (user) {
     const token = randomBytes(32).toString('hex')
     const tokenHash = sha256(token)
     const expiresAt = Date.now() + 1000 * 60 * 30
-    database.prepare('INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)').run(user.id, tokenHash, expiresAt)
-    const recipient = database.prepare('SELECT name FROM users WHERE id = ?').get(user.id)
+    await database.prepare('INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)').run(user.id, tokenHash, expiresAt)
+    const recipient = (await database.prepare('SELECT name FROM users WHERE id = ?').get(user.id))
     const sent = await sendMail({
       to: email,
       subject: 'Restablece tu contraseña de UnFocus',
@@ -894,13 +635,13 @@ app.post('/api/auth/reset-password', async (request, response) => {
   const token = typeof request.body.token === 'string' ? request.body.token.trim() : ''
   const password = typeof request.body.password === 'string' ? request.body.password : ''
   if (!email || !token || password.length < 10) return response.status(400).json({ error: 'Faltan datos para restablecer la contraseña.' })
-  const user = database.prepare('SELECT id FROM users WHERE email = ?').get(email)
+  const user = (await database.prepare('SELECT id FROM users WHERE email = ?').get(email))
   if (!user) return response.status(400).json({ error: 'No se pudo validar la solicitud.' })
-  const reset = database.prepare('SELECT * FROM password_reset_tokens WHERE user_id = ? AND expires_at > ? AND used_at IS NULL ORDER BY created_at DESC LIMIT 1').get(user.id, Date.now())
+  const reset = (await database.prepare('SELECT * FROM password_reset_tokens WHERE user_id = ? AND expires_at > ? AND used_at IS NULL ORDER BY created_at DESC LIMIT 1').get(user.id, Date.now()))
   if (!reset || reset.token_hash !== sha256(token)) return response.status(400).json({ error: 'El token de acceso no es válido o ya expiró.' })
   const passwordHash = await hashPassword(password)
-  database.prepare('UPDATE users SET password_hash = ?, is_guest = 0 WHERE id = ?').run(passwordHash, user.id)
-  database.prepare('UPDATE password_reset_tokens SET used_at = ? WHERE id = ?').run(Date.now(), reset.id)
+  await database.prepare('UPDATE users SET password_hash = ?, is_guest = 0 WHERE id = ?').run(passwordHash, user.id)
+  await database.prepare('UPDATE password_reset_tokens SET used_at = ? WHERE id = ?').run(Date.now(), reset.id)
   response.json({ ok: true, message: 'La contraseña fue actualizada correctamente.' })
 })
 
@@ -912,22 +653,22 @@ app.post('/api/auth/register', limitAuthAttempts, async (request, response) => {
   if (name.length < 2 || name.length > 80) return response.status(400).json({ error: 'Escribe un nombre de entre 2 y 80 caracteres.' })
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return response.status(400).json({ error: 'Escribe un correo válido.' })
   if (password.length < 10 || password.length > 200) return response.status(400).json({ error: 'La contraseña debe tener al menos 10 caracteres.' })
-  const existingUser = database.prepare('SELECT id, is_guest FROM users WHERE email = ?').get(email)
+  const existingUser = (await database.prepare('SELECT id, is_guest FROM users WHERE email = ?').get(email))
   if (existingUser && !existingUser.is_guest) return response.status(409).json({ error: 'Ya existe una cuenta con ese correo.' })
   try {
     const passwordHash = await hashPassword(password)
     // Si el correo ya compró como invitado, la cuenta nueva hereda ese historial de pedidos.
     const userId = existingUser
-      ? (database.prepare('UPDATE users SET name = ?, phone = ?, password_hash = ?, is_guest = 0 WHERE id = ?').run(name, phone, passwordHash, existingUser.id), existingUser.id)
-      : Number(database.prepare('INSERT INTO users (name, email, phone, password_hash) VALUES (?, ?, ?, ?)').run(name, email, phone, passwordHash).lastInsertRowid)
-    const user = database.prepare('SELECT id, name, email, phone, role FROM users WHERE id = ?').get(userId)
+      ? ((await database.prepare('UPDATE users SET name = ?, phone = ?, password_hash = ?, is_guest = 0 WHERE id = ?').run(name, phone, passwordHash, existingUser.id)), existingUser.id)
+      : Number((await database.prepare('INSERT INTO users (name, email, phone, password_hash) VALUES (?, ?, ?, ?)').run(name, email, phone, passwordHash)).lastInsertRowid)
+    const user = (await database.prepare('SELECT id, name, email, phone, role FROM users WHERE id = ?').get(userId))
     void sendMail({
       to: email,
       subject: '¡Bienvenido/a a UnFocus!',
       text: `Hola ${name.split(' ')[0]},\n\nTu cuenta en UnFocus ya está lista. Desde ella puedes seguir tus pedidos, guardar favoritos y retomar pagos pendientes.\n\nEquipo UnFocus\nBusca claridad. Abraza tu esencia.`,
       replyTo: storeSettings.email || undefined,
     })
-    return createUserSession(request, response, user)
+    return (await createUserSession(request, response, user))
   } catch {
     return response.status(500).json({ error: 'No se pudo crear la cuenta.' })
   }
@@ -936,15 +677,15 @@ app.post('/api/auth/register', limitAuthAttempts, async (request, response) => {
 app.post('/api/auth/login', limitAuthAttempts, async (request, response) => {
   const email = typeof request.body.email === 'string' ? request.body.email.trim().toLowerCase() : ''
   const password = typeof request.body.password === 'string' ? request.body.password : ''
-  const user = database.prepare('SELECT id, name, email, phone, password_hash, role FROM users WHERE email = ?').get(email)
+  const user = (await database.prepare('SELECT id, name, email, phone, password_hash, role FROM users WHERE email = ?').get(email))
   if (!user || !(await verifyPassword(password, user.password_hash))) return response.status(401).json({ error: 'Correo o contraseña incorrectos.' })
   const { password_hash: _passwordHash, ...sessionUser } = user
-  return createUserSession(request, response, sessionUser)
+  return (await createUserSession(request, response, sessionUser))
 })
 
-app.post('/api/auth/logout', (request, response) => {
+app.post('/api/auth/logout', async (request, response) => {
   const token = parseCookies(request.headers.cookie)[sessionCookieName]
-  if (token) database.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(token))
+  if (token) await database.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(token))
   response.clearCookie(sessionCookieName, { httpOnly: true, secure: secureCookies, sameSite: 'lax', path: '/' })
   response.json({ ok: true })
 })
@@ -1052,39 +793,39 @@ const updateProduct = database.prepare(`
 app.post('/api/admin/products', requireAdmin, async (request, response) => {
   try {
     const product = await requireProductBody(request.body)
-    const result = insertProduct.run(product.slug, product.name, product.category, product.price, product.garmentCostArs, product.logisticsCostArs, product.productionCostArs, product.taxPercent, product.profitPercent, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue, JSON.stringify(product.colors))
-    response.status(201).json({ product: productFromRow(selectProductById.get(Number(result.lastInsertRowid))) })
+    const result = (await insertProduct.run(product.slug, product.name, product.category, product.price, product.garmentCostArs, product.logisticsCostArs, product.productionCostArs, product.taxPercent, product.profitPercent, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue, JSON.stringify(product.colors)))
+    response.status(201).json({ product: productFromRow((await selectProductById.get(Number(result.lastInsertRowid)))) })
   } catch (error) {
-    response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un producto con ese enlace.' : error.message })
+    response.status(error.code === 'ER_DUP_ENTRY' ? 409 : 400).json({ error: error.code === 'ER_DUP_ENTRY' ? 'Ya existe un producto con ese enlace.' : error.message })
   }
 })
 
 app.put('/api/admin/products/:id', requireAdmin, async (request, response) => {
   const id = Number(request.params.id)
-  if (!Number.isSafeInteger(id) || !selectProductById.get(id)) return response.status(404).json({ error: 'Producto no encontrado.' })
+  if (!Number.isSafeInteger(id) || !(await selectProductById.get(id))) return response.status(404).json({ error: 'Producto no encontrado.' })
   try {
     const product = await requireProductBody(request.body)
-    updateProduct.run(product.slug, product.name, product.category, product.price, product.garmentCostArs, product.logisticsCostArs, product.productionCostArs, product.taxPercent, product.profitPercent, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue, JSON.stringify(product.colors), id)
+    await updateProduct.run(product.slug, product.name, product.category, product.price, product.garmentCostArs, product.logisticsCostArs, product.productionCostArs, product.taxPercent, product.profitPercent, product.stock, JSON.stringify(product.stockBySize || {}), product.composition, JSON.stringify(product.features), product.description, product.designDescription, product.frontImage, product.frontAlt, product.backImage, product.backAlt, product.badge, JSON.stringify(product.extraImages), product.discountType, product.discountValue, JSON.stringify(product.colors), id)
     await notifyRestockedCustomers(id, product.name, product.stockBySize || {})
-    response.json({ product: productFromRow(selectProductById.get(id)) })
+    response.json({ product: productFromRow((await selectProductById.get(id))) })
   } catch (error) {
-    response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un producto con ese enlace.' : error.message })
+    response.status(error.code === 'ER_DUP_ENTRY' ? 409 : 400).json({ error: error.code === 'ER_DUP_ENTRY' ? 'Ya existe un producto con ese enlace.' : error.message })
   }
 })
 
-app.delete('/api/admin/products/:id', requireAdmin, (request, response) => {
+app.delete('/api/admin/products/:id', requireAdmin, async (request, response) => {
   const id = Number(request.params.id)
   if (!Number.isSafeInteger(id)) return response.status(400).json({ error: 'Identificador inválido.' })
-  const result = database.prepare('DELETE FROM products WHERE id = ?').run(id)
+  const result = (await database.prepare('DELETE FROM products WHERE id = ?').run(id))
   if (!result.changes) return response.status(404).json({ error: 'Producto no encontrado.' })
   response.json({ ok: true })
 })
 
-app.get('/api/admin/products', requireAdmin, (_request, response) => {
-  response.json({ products: allProducts.all().map(adminProductFromRow) })
+app.get('/api/admin/products', requireAdmin, async (_request, response) => {
+  response.json({ products: (await allProducts.all()).map(adminProductFromRow) })
 })
 
-const serializeOrder = (order, extra = {}) => ({
+const serializeOrder = async (order, extra = {}) => ({
   id: order.id,
   reference: order.reference,
   totalArs: order.total_ars,
@@ -1109,18 +850,18 @@ const serializeOrder = (order, extra = {}) => ({
   couponCode: order.coupon_code ?? '',
   discountArs: order.discount_ars ?? 0,
   giftCardArs: order.gift_card_ars ?? 0,
-  giftCards: ['paid', 'shipped', 'delivered'].includes(order.status) ? database.prepare('SELECT code, initial_ars AS initialArs, balance_ars AS balanceArs FROM gift_cards WHERE order_id = ? ORDER BY id').all(order.id) : [],
+  giftCards: ['paid', 'shipped', 'delivered'].includes(order.status) ? (await database.prepare('SELECT code, initial_ars AS initialArs, balance_ars AS balanceArs FROM gift_cards WHERE order_id = ? ORDER BY id').all(order.id)) : [],
   trackingUrl: order.tracking_url ?? '',
   shippedAt: order.shipped_at ?? null,
   correoArgentino: Boolean(order.ca_tracking_number),
   miCorreoImported: Boolean(order.mc_imported_at),
-  items: database.prepare('SELECT product_name AS name, product_slug AS slug, image_url AS image, size, quantity, unit_price_ars AS unitPriceArs FROM order_items WHERE order_id = ?').all(order.id),
+  items: (await database.prepare('SELECT product_name AS name, product_slug AS slug, image_url AS image, size, quantity, unit_price_ars AS unitPriceArs FROM order_items WHERE order_id = ?').all(order.id)),
   ...extra,
 })
 
-app.get('/api/account/shipping', requireAuth, (request, response) => {
-  const last = database.prepare('SELECT * FROM orders WHERE user_id = ? AND shipping_name IS NOT NULL ORDER BY id DESC LIMIT 1').get(request.user.id)
-  response.json({ shipping: last ? serializeOrder(last).shipping : null, name: request.user.name, phone: request.user.phone ?? '' })
+app.get('/api/account/shipping', requireAuth, async (request, response) => {
+  const last = (await database.prepare('SELECT * FROM orders WHERE user_id = ? AND shipping_name IS NOT NULL ORDER BY id DESC LIMIT 1').get(request.user.id))
+  response.json({ shipping: last ? (await serializeOrder(last)).shipping : null, name: request.user.name, phone: request.user.phone ?? '' })
 })
 
 const addressSelect = `SELECT id, label, name, phone, street, city, province, postal_code AS postalCode, is_default AS isDefault FROM saved_addresses WHERE user_id = ?`
@@ -1138,61 +879,61 @@ const parseAddressBody = (input) => {
   return { label, name, phone, street, city, province, postalCode, isDefault: input?.isDefault === true }
 }
 
-const setDefaultAddress = (userId, addressId) => {
-  database.prepare('UPDATE saved_addresses SET is_default = 0 WHERE user_id = ?').run(userId)
-  database.prepare('UPDATE saved_addresses SET is_default = 1 WHERE id = ? AND user_id = ?').run(addressId, userId)
+const setDefaultAddress = async (userId, addressId) => {
+  await database.prepare('UPDATE saved_addresses SET is_default = 0 WHERE user_id = ?').run(userId)
+  await database.prepare('UPDATE saved_addresses SET is_default = 1 WHERE id = ? AND user_id = ?').run(addressId, userId)
 }
 
-app.get('/api/account/addresses', requireAuth, (request, response) => {
-  response.json({ addresses: database.prepare(`${addressSelect} ORDER BY is_default DESC, id DESC`).all(request.user.id).map((address) => ({ ...address, isDefault: Boolean(address.isDefault) })) })
+app.get('/api/account/addresses', requireAuth, async (request, response) => {
+  response.json({ addresses: (await database.prepare(`${addressSelect} ORDER BY is_default DESC, id DESC`).all(request.user.id)).map((address) => ({ ...address, isDefault: Boolean(address.isDefault) })) })
 })
 
-app.post('/api/account/addresses', requireAuth, (request, response) => {
+app.post('/api/account/addresses', requireAuth, async (request, response) => {
   try {
     const address = parseAddressBody(request.body)
-    const count = database.prepare('SELECT COUNT(*) AS count FROM saved_addresses WHERE user_id = ?').get(request.user.id).count
-    const result = database.prepare('INSERT INTO saved_addresses (user_id, label, name, phone, street, city, province, postal_code, is_default) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(request.user.id, address.label, address.name, address.phone, address.street, address.city, address.province, address.postalCode, Number(address.isDefault || count === 0))
-    if (address.isDefault) setDefaultAddress(request.user.id, Number(result.lastInsertRowid))
-    response.status(201).json({ addresses: database.prepare(`${addressSelect} ORDER BY is_default DESC, id DESC`).all(request.user.id).map((item) => ({ ...item, isDefault: Boolean(item.isDefault) })) })
+    const count = (await database.prepare('SELECT COUNT(*) AS count FROM saved_addresses WHERE user_id = ?').get(request.user.id)).count
+    const result = (await database.prepare('INSERT INTO saved_addresses (user_id, label, name, phone, street, city, province, postal_code, is_default) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(request.user.id, address.label, address.name, address.phone, address.street, address.city, address.province, address.postalCode, Number(address.isDefault || count === 0)))
+    if (address.isDefault) await setDefaultAddress(request.user.id, Number(result.lastInsertRowid))
+    response.status(201).json({ addresses: (await database.prepare(`${addressSelect} ORDER BY is_default DESC, id DESC`).all(request.user.id)).map((item) => ({ ...item, isDefault: Boolean(item.isDefault) })) })
   } catch (error) {
     response.status(400).json({ error: error.message || 'No se pudo guardar la dirección.' })
   }
 })
 
-app.put('/api/account/addresses/:id', requireAuth, (request, response) => {
+app.put('/api/account/addresses/:id', requireAuth, async (request, response) => {
   const id = Number(request.params.id)
   if (!Number.isSafeInteger(id)) return response.status(400).json({ error: 'Identificador inválido.' })
   try {
     const address = parseAddressBody(request.body)
-    const previous = database.prepare('SELECT is_default FROM saved_addresses WHERE id = ? AND user_id = ?').get(id, request.user.id)
-    const result = database.prepare('UPDATE saved_addresses SET label = ?, name = ?, phone = ?, street = ?, city = ?, province = ?, postal_code = ? WHERE id = ? AND user_id = ?').run(address.label, address.name, address.phone, address.street, address.city, address.province, address.postalCode, id, request.user.id)
+    const previous = (await database.prepare('SELECT is_default FROM saved_addresses WHERE id = ? AND user_id = ?').get(id, request.user.id))
+    const result = (await database.prepare('UPDATE saved_addresses SET label = ?, name = ?, phone = ?, street = ?, city = ?, province = ?, postal_code = ? WHERE id = ? AND user_id = ?').run(address.label, address.name, address.phone, address.street, address.city, address.province, address.postalCode, id, request.user.id))
     if (!result.changes) return response.status(404).json({ error: 'Dirección no encontrada.' })
-    if (address.isDefault) setDefaultAddress(request.user.id, id)
+    if (address.isDefault) await setDefaultAddress(request.user.id, id)
     else if (previous?.is_default) {
-      const next = database.prepare('SELECT id FROM saved_addresses WHERE user_id = ? AND id != ? ORDER BY id DESC LIMIT 1').get(request.user.id, id)
-      setDefaultAddress(request.user.id, next?.id ?? id)
+      const next = (await database.prepare('SELECT id FROM saved_addresses WHERE user_id = ? AND id != ? ORDER BY id DESC LIMIT 1').get(request.user.id, id))
+      await setDefaultAddress(request.user.id, next?.id ?? id)
     }
-    response.json({ addresses: database.prepare(`${addressSelect} ORDER BY is_default DESC, id DESC`).all(request.user.id).map((item) => ({ ...item, isDefault: Boolean(item.isDefault) })) })
+    response.json({ addresses: (await database.prepare(`${addressSelect} ORDER BY is_default DESC, id DESC`).all(request.user.id)).map((item) => ({ ...item, isDefault: Boolean(item.isDefault) })) })
   } catch (error) {
     response.status(400).json({ error: error.message || 'No se pudo actualizar la dirección.' })
   }
 })
 
-app.delete('/api/account/addresses/:id', requireAuth, (request, response) => {
+app.delete('/api/account/addresses/:id', requireAuth, async (request, response) => {
   const id = Number(request.params.id)
   if (!Number.isSafeInteger(id)) return response.status(400).json({ error: 'Identificador inválido.' })
-  const existing = database.prepare('SELECT is_default FROM saved_addresses WHERE id = ? AND user_id = ?').get(id, request.user.id)
+  const existing = (await database.prepare('SELECT is_default FROM saved_addresses WHERE id = ? AND user_id = ?').get(id, request.user.id))
   if (!existing) return response.status(404).json({ error: 'Dirección no encontrada.' })
-  database.prepare('DELETE FROM saved_addresses WHERE id = ? AND user_id = ?').run(id, request.user.id)
+  await database.prepare('DELETE FROM saved_addresses WHERE id = ? AND user_id = ?').run(id, request.user.id)
   if (existing.is_default) {
-    const next = database.prepare('SELECT id FROM saved_addresses WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(request.user.id)
-    if (next) setDefaultAddress(request.user.id, next.id)
+    const next = (await database.prepare('SELECT id FROM saved_addresses WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(request.user.id))
+    if (next) await setDefaultAddress(request.user.id, next.id)
   }
-  response.json({ addresses: database.prepare(`${addressSelect} ORDER BY is_default DESC, id DESC`).all(request.user.id).map((item) => ({ ...item, isDefault: Boolean(item.isDefault) })) })
+  response.json({ addresses: (await database.prepare(`${addressSelect} ORDER BY is_default DESC, id DESC`).all(request.user.id)).map((item) => ({ ...item, isDefault: Boolean(item.isDefault) })) })
 })
 
-app.post('/api/products/:slug/restock-notifications', limitRestockRequests, (request, response) => {
-  const product = database.prepare('SELECT id, name, is_gift_card, stock_by_size FROM products WHERE slug = ?').get(request.params.slug)
+app.post('/api/products/:slug/restock-notifications', limitRestockRequests, async (request, response) => {
+  const product = (await database.prepare('SELECT id, name, is_gift_card, stock_by_size FROM products WHERE slug = ?').get(request.params.slug))
   if (!product || product.is_gift_card) return response.status(404).json({ error: 'Producto no encontrado.' })
   const email = typeof request.body?.email === 'string' ? request.body.email.trim().toLowerCase() : ''
   const size = typeof request.body?.size === 'string' ? request.body.size.trim().toUpperCase() : ''
@@ -1201,42 +942,42 @@ app.post('/api/products/:slug/restock-notifications', limitRestockRequests, (req
   }
   const stockBySize = JSON.parse(product.stock_by_size || '{}')
   if (Number(stockBySize[size] ?? 0) > 0) return response.status(409).json({ error: 'Ese talle ya está disponible. Actualiza la página para comprarlo.' })
-  database.prepare('INSERT OR IGNORE INTO restock_subscriptions (product_id, size, email) VALUES (?, ?, ?)').run(product.id, size, email)
+  await database.prepare('INSERT INTO restock_subscriptions (product_id, size, email) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE product_id = product_id').run(product.id, size, email)
   response.status(201).json({ message: `Te avisaremos por email cuando vuelva ${product.name}, talle ${size}.` })
 })
 
-app.get('/api/account/summary', requireAuth, (request, response) => {
-  const favoriteRows = database.prepare(`SELECT p.* FROM favorites f JOIN products p ON p.id = f.product_id WHERE f.user_id = ? ORDER BY f.created_at DESC`).all(request.user.id)
-  const orderRows = database.prepare('SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 8').all(request.user.id)
-  const orders = orderRows.map((order) => serializeOrder(order))
-  const purchasedIds = new Set(database.prepare('SELECT DISTINCT oi.product_id FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.user_id = ? AND oi.product_id IS NOT NULL').all(request.user.id).map((row) => row.product_id))
+app.get('/api/account/summary', requireAuth, async (request, response) => {
+  const favoriteRows = (await database.prepare(`SELECT p.* FROM favorites f JOIN products p ON p.id = f.product_id WHERE f.user_id = ? ORDER BY f.created_at DESC`).all(request.user.id))
+  const orderRows = (await database.prepare('SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 8').all(request.user.id))
+  const orders = await Promise.all(orderRows.map((order) => serializeOrder(order)))
+  const purchasedIds = new Set((await database.prepare('SELECT DISTINCT oi.product_id FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.user_id = ? AND oi.product_id IS NOT NULL').all(request.user.id)).map((row) => row.product_id))
   const favoriteIds = new Set(favoriteRows.map((product) => product.id))
-  let recommendations = allProducts.all().map(productFromRow).filter((product) => !favoriteIds.has(product.id) && !purchasedIds.has(product.id)).slice(0, 4)
-  if (!recommendations.length) recommendations = allProducts.all().map(productFromRow).filter((product) => !favoriteIds.has(product.id)).slice(0, 4)
+  let recommendations = (await allProducts.all()).map(productFromRow).filter((product) => !favoriteIds.has(product.id) && !purchasedIds.has(product.id)).slice(0, 4)
+  if (!recommendations.length) recommendations = (await allProducts.all()).map(productFromRow).filter((product) => !favoriteIds.has(product.id)).slice(0, 4)
   response.json({ favorites: favoriteRows.map(productFromRow), orders, recommendations })
 })
 
-app.post('/api/account/favorites/:productId', requireAuth, (request, response) => {
+app.post('/api/account/favorites/:productId', requireAuth, async (request, response) => {
   const productId = Number(request.params.productId)
-  if (!Number.isSafeInteger(productId) || !selectProductById.get(productId)) return response.status(404).json({ error: 'Producto no encontrado.' })
-  database.prepare('INSERT OR IGNORE INTO favorites (user_id, product_id) VALUES (?, ?)').run(request.user.id, productId)
+  if (!Number.isSafeInteger(productId) || !(await selectProductById.get(productId))) return response.status(404).json({ error: 'Producto no encontrado.' })
+  await database.prepare('INSERT INTO favorites (user_id, product_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE user_id = user_id').run(request.user.id, productId)
   response.json({ ok: true })
 })
 
-app.delete('/api/account/favorites/:productId', requireAuth, (request, response) => {
-  database.prepare('DELETE FROM favorites WHERE user_id = ? AND product_id = ?').run(request.user.id, Number(request.params.productId))
+app.delete('/api/account/favorites/:productId', requireAuth, async (request, response) => {
+  await database.prepare('DELETE FROM favorites WHERE user_id = ? AND product_id = ?').run(request.user.id, Number(request.params.productId))
   response.json({ ok: true })
 })
 
 // Genera los códigos de las tarjetas de regalo compradas (una vez por pedido).
-const issueGiftCards = (orderId) => {
-  if (database.prepare('SELECT 1 FROM gift_cards WHERE order_id = ?').get(orderId)) return
-  const lines = database.prepare('SELECT oi.size, oi.quantity FROM order_items oi JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? AND p.is_gift_card = 1').all(orderId)
+const issueGiftCards = async (orderId) => {
+  if ((await database.prepare('SELECT 1 FROM gift_cards WHERE order_id = ?').get(orderId))) return
+  const lines = (await database.prepare('SELECT oi.size, oi.quantity FROM order_items oi JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ? AND p.is_gift_card = 1').all(orderId))
   const insert = database.prepare('INSERT INTO gift_cards (code, initial_ars, balance_ars, order_id) VALUES (?, ?, ?, ?)')
   for (const line of lines) {
     for (let index = 0; index < line.quantity; index += 1) {
       const hex = randomBytes(6).toString('hex').toUpperCase()
-      insert.run(`GC-${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8)}`, Number(line.size), Number(line.size), orderId)
+      await insert.run(`GC-${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8)}`, Number(line.size), Number(line.size), orderId)
     }
   }
 }
@@ -1244,9 +985,9 @@ const issueGiftCards = (orderId) => {
 const couponSelect = 'SELECT id, code, type, value, min_subtotal_ars AS minSubtotal, max_uses AS maxUses, uses, expires_at AS expiresAt, active, created_at AS createdAt FROM coupons'
 
 // Devuelve el cupón y el descuento aplicable al subtotal elegible o lanza un error legible.
-const evaluateCoupon = (rawCode, eligibleSubtotal) => {
+const evaluateCoupon = async (rawCode, eligibleSubtotal, forUpdate = false) => {
   const code = typeof rawCode === 'string' ? rawCode.trim() : ''
-  const coupon = code ? database.prepare(`${couponSelect} WHERE code = ?`).get(code) : null
+  const coupon = code ? (await database.prepare(`${couponSelect} WHERE code = ?${forUpdate ? ' FOR UPDATE' : ''}`).get(code)) : null
   if (!coupon || !coupon.active) throw new Error('El código de descuento no es válido.')
   if (coupon.expiresAt && new Date(`${coupon.expiresAt}T23:59:59`).getTime() < Date.now()) throw new Error('El código de descuento venció.')
   if (coupon.maxUses > 0 && coupon.uses >= coupon.maxUses) throw new Error('El código de descuento alcanzó su límite de usos.')
@@ -1257,16 +998,17 @@ const evaluateCoupon = (rawCode, eligibleSubtotal) => {
   return { coupon, discount }
 }
 
-const buildOrderFromItems = (items, userId) => {
+const buildOrderFromItems = async (items, userId) => {
   const allowedSizes = new Set(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL'])
   if (!Array.isArray(items) || !items.length || items.length > 20) throw new Error('El pedido no tiene productos válidos.')
   const orderItems = []
+  const requestedByProductAndSize = new Map()
   let total = 0
   let eligibleSubtotal = 0
   for (const item of items) {
     const productId = Number(item.productId)
     const quantity = Number(item.quantity)
-    const productRow = selectProductById.get(productId)
+    const productRow = (await selectProductById.get(productId))
     if (!productRow || !Number.isInteger(quantity) || quantity < 1 || quantity > 20 || (!productRow.is_gift_card && !allowedSizes.has(item.size))) throw new Error('Revisa los productos, cantidades y tallas del pedido.')
     const product = productFromRow(productRow)
     if (product.isGiftCard) {
@@ -1277,7 +1019,10 @@ const buildOrderFromItems = (items, userId) => {
       continue
     }
     const stockForSize = Number(product.stockBySize?.[item.size] ?? 0)
-    if (stockForSize < quantity) throw new Error(`No hay stock suficiente para ${product.name} en talla ${item.size}.`)
+    const stockKey = `${productId}:${item.size}`
+    const requested = (requestedByProductAndSize.get(stockKey) ?? 0) + quantity
+    if (stockForSize < requested) throw new Error(`No hay stock suficiente para ${product.name} en talla ${item.size}.`)
+    requestedByProductAndSize.set(stockKey, requested)
     total += product.salePrice * quantity
     eligibleSubtotal += product.salePrice * quantity
     orderItems.push({ product, quantity, size: item.size, unitPrice: product.salePrice })
@@ -1286,155 +1031,176 @@ const buildOrderFromItems = (items, userId) => {
   return { orderItems, total, eligibleSubtotal, reference, userId }
 }
 
-const createOrderRecord = (request, items, shipping, { notify = true, paymentMethod = 'mercadopago', quotedShippingArs } = {}) => {
-  const { orderItems, total: subtotal, eligibleSubtotal, reference, userId } = buildOrderFromItems(items, request.user.id)
-  const digitalOnly = orderItems.every((item) => item.product.isGiftCard)
-  const shippingDetails = digitalOnly
-    ? { method: 'digital', name: cleanText(shipping?.name, 80) || request.user.name, phone: cleanText(shipping?.phone, 40), street: '', city: '', province: '', postalCode: '', notes: '', costArs: 0 }
-    : parseShippingDetails(shipping, subtotal)
-  const freeShipping = storeSettings.freeShippingThresholdArs > 0 && subtotal >= storeSettings.freeShippingThresholdArs
-  if (quotedShippingArs !== undefined && shippingDetails.method === 'delivery' && !freeShipping) shippingDetails.costArs = quotedShippingArs
-  const { coupon, discount } = request.body?.couponCode ? evaluateCoupon(request.body.couponCode, eligibleSubtotal) : { coupon: null, discount: 0 }
-  const payable = subtotal - discount + shippingDetails.costArs
-  let giftCard = null
-  let giftApplied = 0
-  const giftCardCode = typeof request.body?.giftCardCode === 'string' ? request.body.giftCardCode.trim() : ''
-  if (giftCardCode) {
-    if (orderItems.some((item) => item.product.isGiftCard)) throw new Error('Una tarjeta de regalo no se puede pagar con otra tarjeta de regalo.')
-    giftCard = database.prepare('SELECT id, code, balance_ars AS balance FROM gift_cards WHERE code = ?').get(giftCardCode)
-    if (!giftCard || giftCard.balance <= 0) throw new Error('La tarjeta de regalo no es válida o no tiene saldo.')
-    giftApplied = Math.min(giftCard.balance, payable)
-  }
-  const total = payable - giftApplied
-  try {
-    database.exec('BEGIN IMMEDIATE')
-    const result = database.prepare('INSERT INTO orders (reference, user_id, total_ars, status, shipping_cost_ars, shipping_method, shipping_name, shipping_phone, shipping_street, shipping_city, shipping_province, shipping_postal_code, shipping_notes, payment_method, coupon_code, discount_ars, gift_card_code, gift_card_ars) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(reference, userId, total, 'pending_payment', shippingDetails.costArs, shippingDetails.method, shippingDetails.name, shippingDetails.phone, shippingDetails.street, shippingDetails.city, shippingDetails.province, shippingDetails.postalCode, shippingDetails.notes, paymentMethod, coupon?.code ?? '', discount, giftCard?.code ?? '', giftApplied)
-    const orderId = Number(result.lastInsertRowid)
-    if (coupon) {
-      const used = database.prepare('UPDATE coupons SET uses = uses + 1 WHERE id = ? AND (max_uses = 0 OR uses < max_uses)').run(coupon.id)
-      if (!used.changes) throw new Error('coupon-exhausted')
+const createOrderRecord = async (request, items, shipping, { notify = true, paymentMethod = 'mercadopago', quotedShippingArs } = {}) => {
+  return database.transaction(async () => {
+    if (!Array.isArray(items) || !items.length || items.length > 20) throw new Error('El pedido no tiene productos válidos.')
+    const ids = [...new Set(items.map((item) => Number(item.productId)))].sort((a, b) => a - b)
+    if (ids.some((id) => !Number.isSafeInteger(id) || id < 1)) throw new Error('Revisa los productos, cantidades y tallas del pedido.')
+    for (const id of ids) await database.prepare('SELECT id FROM products WHERE id = ? FOR UPDATE').get(id)
+    const { orderItems, total: subtotal, eligibleSubtotal, reference, userId } = (await buildOrderFromItems(items, request.user.id))
+    const digitalOnly = orderItems.every((item) => item.product.isGiftCard)
+    const shippingDetails = digitalOnly
+      ? { method: 'digital', name: cleanText(shipping?.name, 80) || request.user.name, phone: cleanText(shipping?.phone, 40), street: '', city: '', province: '', postalCode: '', notes: '', costArs: 0 }
+      : parseShippingDetails(shipping, subtotal)
+    const freeShipping = storeSettings.freeShippingThresholdArs > 0 && subtotal >= storeSettings.freeShippingThresholdArs
+    if (quotedShippingArs !== undefined && shippingDetails.method === 'delivery' && !freeShipping) shippingDetails.costArs = quotedShippingArs
+    const { coupon, discount } = request.body?.couponCode ? (await evaluateCoupon(request.body.couponCode, eligibleSubtotal, true)) : { coupon: null, discount: 0 }
+    const payable = subtotal - discount + shippingDetails.costArs
+    let giftCard = null
+    let giftApplied = 0
+    const giftCardCode = typeof request.body?.giftCardCode === 'string' ? request.body.giftCardCode.trim() : ''
+    if (giftCardCode) {
+      if (orderItems.some((item) => item.product.isGiftCard)) throw new Error('Una tarjeta de regalo no se puede pagar con otra tarjeta de regalo.')
+      giftCard = (await database.prepare('SELECT id, code, balance_ars AS balance FROM gift_cards WHERE code = ? FOR UPDATE').get(giftCardCode))
+      if (!giftCard || giftCard.balance <= 0) throw new Error('La tarjeta de regalo no es válida o no tiene saldo.')
+      giftApplied = Math.min(giftCard.balance, payable)
     }
-    if (giftCard && giftApplied > 0) {
-      const spent = database.prepare('UPDATE gift_cards SET balance_ars = balance_ars - ? WHERE id = ? AND balance_ars >= ?').run(giftApplied, giftCard.id, giftApplied)
-      if (!spent.changes) throw new Error('giftcard-exhausted')
+    const total = payable - giftApplied
+    try {
+      const result = (await database.prepare('INSERT INTO orders (reference, user_id, total_ars, status, shipping_cost_ars, shipping_method, shipping_name, shipping_phone, shipping_street, shipping_city, shipping_province, shipping_postal_code, shipping_notes, payment_method, coupon_code, discount_ars, gift_card_code, gift_card_ars) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(reference, userId, total, 'pending_payment', shippingDetails.costArs, shippingDetails.method, shippingDetails.name, shippingDetails.phone, shippingDetails.street, shippingDetails.city, shippingDetails.province, shippingDetails.postalCode, shippingDetails.notes, paymentMethod, coupon?.code ?? '', discount, giftCard?.code ?? '', giftApplied))
+      const orderId = Number(result.lastInsertRowid)
+      if (coupon) {
+        const used = (await database.prepare('UPDATE coupons SET uses = uses + 1 WHERE id = ? AND (max_uses = 0 OR uses < max_uses)').run(coupon.id))
+        if (!used.changes) throw new Error('coupon-exhausted')
+      }
+      if (giftCard && giftApplied > 0) {
+        const spent = (await database.prepare('UPDATE gift_cards SET balance_ars = balance_ars - ? WHERE id = ? AND balance_ars >= ?').run(giftApplied, giftCard.id, giftApplied))
+        if (!spent.changes) throw new Error('giftcard-exhausted')
+      }
+      const insertItem = database.prepare('INSERT INTO order_items (order_id, product_id, product_name, product_slug, image_url, size, quantity, unit_price_ars) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      for (const item of orderItems) {
+        await insertItem.run(orderId, item.product.id, item.product.name, item.product.slug, item.product.gallery?.[0]?.src ?? '', item.size, item.quantity, item.unitPrice)
+        if (item.product.isGiftCard) continue
+        const existingStock = JSON.parse((await selectProductById.get(item.product.id)).stock_by_size || '{}')
+        const nextSizeStock = Number(existingStock[item.size] ?? 0) - item.quantity
+        existingStock[item.size] = nextSizeStock
+        const nextTotalStock = Number((await selectProductById.get(item.product.id)).stock || 0) - item.quantity
+        if (nextSizeStock < 0 || nextTotalStock < 0) throw new Error('Stock inconsistente.')
+        await database.prepare('UPDATE products SET stock = ?, stock_by_size = ? WHERE id = ?').run(nextTotalStock, JSON.stringify(existingStock), item.product.id)
+      }
+      if (notify) await createNotification(userId, 'order_created', 'Pedido registrado', `Tu pedido ${reference} quedó registrado y está pendiente de pago.`, orderId)
+      return { order: { id: orderId, reference, totalArs: total, discountArs: discount, giftCardArs: giftApplied, lineItems: orderItems.map((item) => ({ id: String(item.product.id), title: item.product.name, description: item.product.isGiftCard ? 'Tarjeta de regalo' : `Talla ${item.size}`, quantity: item.quantity, unit_price: item.unitPrice, currency_id: 'ARS' })), shippingCostArs: shippingDetails.costArs, status: 'pending_payment' } }
+    } catch (error) {
+      if (!['coupon-exhausted', 'giftcard-exhausted'].includes(error.message)) console.error('Could not create order:', error)
+      throw new Error(error.message === 'coupon-exhausted' ? 'El cupón alcanzó su límite de usos.' : error.message === 'giftcard-exhausted' ? 'La tarjeta de regalo ya no tiene saldo suficiente.' : 'No se pudo registrar el pedido.')
     }
-    const insertItem = database.prepare('INSERT INTO order_items (order_id, product_id, product_name, product_slug, image_url, size, quantity, unit_price_ars) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    for (const item of orderItems) {
-      insertItem.run(orderId, item.product.id, item.product.name, item.product.slug, item.product.gallery?.[0]?.src ?? '', item.size, item.quantity, item.unitPrice)
-      if (item.product.isGiftCard) continue
-      const existingStock = JSON.parse(selectProductById.get(item.product.id).stock_by_size || '{}')
-      const nextSizeStock = Math.max(0, Number(existingStock[item.size] ?? 0) - item.quantity)
-      existingStock[item.size] = nextSizeStock
-      const nextTotalStock = Math.max(0, Number(selectProductById.get(item.product.id).stock || 0) - item.quantity)
-      database.prepare('UPDATE products SET stock = ?, stock_by_size = ? WHERE id = ?').run(nextTotalStock, JSON.stringify(existingStock), item.product.id)
-    }
-    if (notify) createNotification(userId, 'order_created', 'Pedido registrado', `Tu pedido ${reference} quedó registrado y está pendiente de pago.`, orderId)
-    database.exec('COMMIT')
-    return { order: { id: orderId, reference, totalArs: total, discountArs: discount, giftCardArs: giftApplied, lineItems: orderItems.map((item) => ({ id: String(item.product.id), title: item.product.name, description: item.product.isGiftCard ? 'Tarjeta de regalo' : `Talla ${item.size}`, quantity: item.quantity, unit_price: item.unitPrice, currency_id: 'ARS' })), shippingCostArs: shippingDetails.costArs, status: 'pending_payment' } }
-  } catch (error) {
-    database.exec('ROLLBACK')
-    throw new Error(error.message === 'coupon-exhausted' ? 'El cupón alcanzó su límite de usos.' : error.message === 'giftcard-exhausted' ? 'La tarjeta de regalo ya no tiene saldo suficiente.' : 'No se pudo registrar el pedido.')
-  }
+  })
 }
 
+class OrderAdjustmentError extends Error {}
+
 // direction: 1 devuelve stock al inventario, -1 lo vuelve a descontar
-const adjustOrderStock = (orderId, direction) => {
-  const used = database.prepare('SELECT coupon_code, gift_card_code, gift_card_ars FROM orders WHERE id = ?').get(orderId)
-  if (used?.coupon_code) database.prepare('UPDATE coupons SET uses = MAX(0, uses - ?) WHERE code = ?').run(direction, used.coupon_code)
-  if (used?.gift_card_code && used.gift_card_ars) database.prepare('UPDATE gift_cards SET balance_ars = MAX(0, balance_ars + ?) WHERE code = ?').run(direction * used.gift_card_ars, used.gift_card_code)
-  // Las tarjetas emitidas por este pedido se anulan al cancelarlo y se rehabilitan si se reactiva.
-  if (direction === 1) database.prepare('UPDATE gift_cards SET balance_ars = 0 WHERE order_id = ?').run(orderId)
-  else database.prepare('UPDATE gift_cards SET balance_ars = initial_ars WHERE order_id = ?').run(orderId)
-  const items = database.prepare('SELECT product_id, size, quantity FROM order_items WHERE order_id = ?').all(orderId)
+const adjustOrderStock = async (orderId, direction) => {
+  const used = (await database.prepare('SELECT coupon_code, gift_card_code, gift_card_ars FROM orders WHERE id = ?').get(orderId))
+  if (used?.coupon_code) {
+    const updated = direction === 1
+      ? await database.prepare('UPDATE coupons SET uses = GREATEST(0, uses - 1) WHERE code = ?').run(used.coupon_code)
+      : await database.prepare('UPDATE coupons SET uses = uses + 1 WHERE code = ? AND (max_uses = 0 OR uses < max_uses)').run(used.coupon_code)
+    if (direction === -1 && !updated.changes) throw new OrderAdjustmentError('El cupón ya no está disponible para reactivar el pedido.')
+  }
+  if (used?.gift_card_code && used.gift_card_ars) {
+    const adjustment = direction * used.gift_card_ars
+    const updated = await database.prepare('UPDATE gift_cards SET balance_ars = balance_ars + ? WHERE code = ? AND balance_ars + ? >= 0').run(adjustment, used.gift_card_code, adjustment)
+    if (!updated.changes) throw new OrderAdjustmentError('La tarjeta de regalo no tiene saldo suficiente para reactivar el pedido.')
+  }
+  if (direction === 1) {
+    const spent = await database.prepare('SELECT id FROM gift_cards WHERE order_id = ? AND balance_ars < initial_ars LIMIT 1 FOR UPDATE').get(orderId)
+    if (spent) throw new OrderAdjustmentError('No se puede cancelar un pedido con tarjetas de regalo ya utilizadas.')
+    await database.prepare('UPDATE gift_cards SET balance_ars = 0 WHERE order_id = ?').run(orderId)
+  }
+  else await database.prepare('UPDATE gift_cards SET balance_ars = initial_ars WHERE order_id = ?').run(orderId)
+  const items = (await database.prepare('SELECT product_id, size, quantity FROM order_items WHERE order_id = ? ORDER BY product_id').all(orderId))
   for (const item of items) {
     if (!item.product_id) continue
-    const product = selectProductById.get(item.product_id)
+    const product = await database.prepare('SELECT * FROM products WHERE id = ? FOR UPDATE').get(item.product_id)
     if (!product || product.is_gift_card) continue
     const stockBySize = JSON.parse(product.stock_by_size || '{}')
     const delta = direction * Number(item.quantity)
-    stockBySize[item.size] = Math.max(0, Number(stockBySize[item.size] ?? 0) + delta)
-    const stock = Math.max(0, Number(product.stock ?? 0) + delta)
-    database.prepare('UPDATE products SET stock = ?, stock_by_size = ? WHERE id = ?').run(stock, JSON.stringify(stockBySize), item.product_id)
+    const sizeStock = Number(stockBySize[item.size] ?? 0) + delta
+    const stock = Number(product.stock ?? 0) + delta
+    if (sizeStock < 0 || stock < 0) throw new OrderAdjustmentError('No hay stock suficiente para reactivar el pedido.')
+    stockBySize[item.size] = sizeStock
+    await database.prepare('UPDATE products SET stock = ?, stock_by_size = ? WHERE id = ?').run(stock, JSON.stringify(stockBySize), item.product_id)
   }
 }
 
-const cancelPendingOrderAndRestoreStock = (orderId, { removeOrder = false, reason = 'payment' } = {}) => {
-  database.exec('BEGIN IMMEDIATE')
-  try {
-    const order = database.prepare('SELECT id, user_id, reference, status FROM orders WHERE id = ?').get(orderId)
+const cancelPendingOrderAndRestoreStock = async (orderId, { removeOrder = false, reason = 'payment' } = {}) => {
+  const cancelledOrder = await database.transaction(async () => {
+    const order = (await database.prepare('SELECT id, user_id, reference, status FROM orders WHERE id = ? FOR UPDATE').get(orderId))
     if (!order || order.status !== 'pending_payment') {
-      database.exec('COMMIT')
       return false
     }
-    const cancelled = database.prepare("UPDATE orders SET status = 'cancelled' WHERE id = ? AND status = 'pending_payment'").run(order.id)
+    const cancelled = (await database.prepare("UPDATE orders SET status = 'cancelled' WHERE id = ? AND status = 'pending_payment'").run(order.id))
     if (!cancelled.changes) {
-      database.exec('COMMIT')
       return false
     }
-    adjustOrderStock(order.id, 1)
+    await adjustOrderStock(order.id, 1)
     if (removeOrder) {
-      database.prepare('DELETE FROM notifications WHERE user_id = ? AND kind = ? AND message = ?')
+      await database.prepare('DELETE FROM notifications WHERE user_id = ? AND kind = ? AND message = ?')
         .run(order.user_id, 'order_created', `Tu pedido ${order.reference} quedó registrado y está pendiente de pago.`)
-      database.prepare('DELETE FROM orders WHERE id = ?').run(order.id)
+      await database.prepare('DELETE FROM orders WHERE id = ?').run(order.id)
     } else {
-      createNotification(order.user_id, 'order_cancelled', 'Pago no completado', reason === 'expired'
+      await createNotification(order.user_id, 'order_cancelled', 'Pago no completado', reason === 'expired'
         ? `El pedido ${order.reference} se canceló por falta de pago en ${pendingOrderExpiryDays} días. El stock fue liberado.`
         : `El pago del pedido ${order.reference} no se completó. El stock fue liberado.`, order.id)
     }
-    database.exec('COMMIT')
-    if (!removeOrder) void sendOrderEmail(order.id, 'cancelled')
     return true
-  } catch (error) {
-    database.exec('ROLLBACK')
-    throw error
-  }
+  })
+  if (cancelledOrder && !removeOrder) void sendOrderEmail(orderId, 'cancelled').catch((error) => console.error('Could not send order email:', error))
+  return cancelledOrder
 }
 
 const pendingOrderExpiryDays = Math.max(1, Number(process.env.PENDING_ORDER_EXPIRY_DAYS) || 3)
-const cancelExpiredPendingOrders = () => {
+const utcDaysAgo = (days) => new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ')
+const cancelExpiredPendingOrders = async () => {
   try {
-    const expired = database.prepare("SELECT id FROM orders WHERE status = 'pending_payment' AND created_at <= datetime('now', ?)").all(`-${pendingOrderExpiryDays} days`)
-    for (const { id } of expired) cancelPendingOrderAndRestoreStock(id, { reason: 'expired' })
+    const expired = (await database.prepare("SELECT id FROM orders WHERE status = 'pending_payment' AND created_at <= ?").all(utcDaysAgo(pendingOrderExpiryDays)))
+    for (const { id } of expired) await cancelPendingOrderAndRestoreStock(id, { reason: 'expired' })
     return expired.length
   } catch (error) {
     console.error('Could not cancel expired orders:', error.message)
     return 0
   }
 }
-cancelExpiredPendingOrders()
+await cancelExpiredPendingOrders()
 setInterval(cancelExpiredPendingOrders, 60 * 60 * 1000).unref()
 
-app.post('/api/gift-cards/validate', limitAuthAttempts, (request, response) => {
+app.post('/api/gift-cards/validate', limitAuthAttempts, async (request, response) => {
   const code = typeof request.body?.code === 'string' ? request.body.code.trim() : ''
-  const card = code ? database.prepare('SELECT code, balance_ars AS balanceArs FROM gift_cards WHERE code = ?').get(code) : null
+  const card = code ? (await database.prepare('SELECT code, balance_ars AS balanceArs FROM gift_cards WHERE code = ?').get(code)) : null
   if (!card || card.balanceArs <= 0) return response.status(400).json({ error: 'La tarjeta de regalo no es válida o no tiene saldo.' })
   response.json(card)
 })
 
-app.get('/api/admin/gift-cards', requireAdmin, (_request, response) => {
-  response.json({ giftCards: database.prepare('SELECT g.id, g.code, g.initial_ars AS initialArs, g.balance_ars AS balanceArs, g.created_at AS createdAt, o.reference AS orderReference FROM gift_cards g LEFT JOIN orders o ON o.id = g.order_id ORDER BY g.id DESC').all() })
+app.get('/api/admin/gift-cards', requireAdmin, async (_request, response) => {
+  response.json({ giftCards: (await database.prepare('SELECT g.id, g.code, g.initial_ars AS initialArs, g.balance_ars AS balanceArs, g.created_at AS createdAt, o.reference AS orderReference FROM gift_cards g LEFT JOIN orders o ON o.id = g.order_id ORDER BY g.id DESC').all()) })
 })
 
 // Pedidos cubiertos por descuentos o tarjetas de regalo: no hay nada que cobrar.
-const markOrderPaidWithoutCharge = (order, userId) => {
-  database.prepare("UPDATE orders SET status = 'paid' WHERE id = ?").run(order.id)
+const markOrderPaidWithoutCharge = async (order, userId) => {
+  await database.transaction(async () => {
+    const current = await database.prepare('SELECT status FROM orders WHERE id = ? FOR UPDATE').get(order.id)
+    if (!current || current.status !== 'pending_payment') throw new Error('El pedido ya no está pendiente de pago.')
+    await database.prepare("UPDATE orders SET status = 'paid' WHERE id = ?").run(order.id)
+    await issueGiftCards(order.id)
+    await createNotification(userId, 'order_paid', 'Compra confirmada', `Tu pedido ${order.reference} fue confirmado.`, order.id)
+  })
   order.status = 'paid'
-  createNotification(userId, 'order_paid', 'Compra confirmada', `Tu pedido ${order.reference} fue confirmado.`, order.id)
-  void sendOrderEmail(order.id, 'paid')
+  void sendOrderEmail(order.id, 'paid').catch((error) => console.error('Could not send order email:', error))
 }
 
-app.post('/api/coupons/validate', (request, response) => {
+app.post('/api/coupons/validate', async (request, response) => {
   try {
-    const { eligibleSubtotal } = buildOrderFromItems(request.body.items, null)
-    const { coupon, discount } = evaluateCoupon(request.body.code, eligibleSubtotal)
+    const { eligibleSubtotal } = (await buildOrderFromItems(request.body.items, null))
+    const { coupon, discount } = (await evaluateCoupon(request.body.code, eligibleSubtotal))
     response.json({ code: coupon.code, discountArs: discount })
   } catch (error) {
     response.status(400).json({ error: error.message })
   }
 })
 
-app.get('/api/admin/coupons', requireAdmin, (_request, response) => {
-  response.json({ coupons: database.prepare(`${couponSelect} ORDER BY id DESC`).all() })
+app.get('/api/admin/coupons', requireAdmin, async (_request, response) => {
+  response.json({ coupons: (await database.prepare(`${couponSelect} ORDER BY id DESC`).all()) })
 })
 
 const parseCouponBody = (body) => {
@@ -1451,30 +1217,30 @@ const parseCouponBody = (body) => {
   return { code, type, value, minSubtotal, maxUses, expiresAt, active: body.active === false ? 0 : 1 }
 }
 
-app.post('/api/admin/coupons', requireAdmin, (request, response) => {
+app.post('/api/admin/coupons', requireAdmin, async (request, response) => {
   try {
     const c = parseCouponBody(request.body)
-    database.prepare('INSERT INTO coupons (code, type, value, min_subtotal_ars, max_uses, expires_at, active) VALUES (?, ?, ?, ?, ?, ?, ?)').run(c.code, c.type, c.value, c.minSubtotal, c.maxUses, c.expiresAt, c.active)
-    response.status(201).json({ coupons: database.prepare(`${couponSelect} ORDER BY id DESC`).all() })
+    await database.prepare('INSERT INTO coupons (code, type, value, min_subtotal_ars, max_uses, expires_at, active) VALUES (?, ?, ?, ?, ?, ?, ?)').run(c.code, c.type, c.value, c.minSubtotal, c.maxUses, c.expiresAt, c.active)
+    response.status(201).json({ coupons: (await database.prepare(`${couponSelect} ORDER BY id DESC`).all()) })
   } catch (error) {
-    response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un cupón con ese código.' : error.message })
+    response.status(error.code === 'ER_DUP_ENTRY' ? 409 : 400).json({ error: error.code === 'ER_DUP_ENTRY' ? 'Ya existe un cupón con ese código.' : error.message })
   }
 })
 
-app.put('/api/admin/coupons/:id', requireAdmin, (request, response) => {
+app.put('/api/admin/coupons/:id', requireAdmin, async (request, response) => {
   try {
     const c = parseCouponBody(request.body)
-    const result = database.prepare('UPDATE coupons SET code = ?, type = ?, value = ?, min_subtotal_ars = ?, max_uses = ?, expires_at = ?, active = ? WHERE id = ?').run(c.code, c.type, c.value, c.minSubtotal, c.maxUses, c.expiresAt, c.active, Number(request.params.id))
+    const result = (await database.prepare('UPDATE coupons SET code = ?, type = ?, value = ?, min_subtotal_ars = ?, max_uses = ?, expires_at = ?, active = ? WHERE id = ?').run(c.code, c.type, c.value, c.minSubtotal, c.maxUses, c.expiresAt, c.active, Number(request.params.id)))
     if (!result.changes) return response.status(404).json({ error: 'Cupón no encontrado.' })
-    response.json({ coupons: database.prepare(`${couponSelect} ORDER BY id DESC`).all() })
+    response.json({ coupons: (await database.prepare(`${couponSelect} ORDER BY id DESC`).all()) })
   } catch (error) {
-    response.status(error.message.includes('UNIQUE') ? 409 : 400).json({ error: error.message.includes('UNIQUE') ? 'Ya existe un cupón con ese código.' : error.message })
+    response.status(error.code === 'ER_DUP_ENTRY' ? 409 : 400).json({ error: error.code === 'ER_DUP_ENTRY' ? 'Ya existe un cupón con ese código.' : error.message })
   }
 })
 
-app.delete('/api/admin/coupons/:id', requireAdmin, (request, response) => {
-  database.prepare('DELETE FROM coupons WHERE id = ?').run(Number(request.params.id))
-  response.json({ coupons: database.prepare(`${couponSelect} ORDER BY id DESC`).all() })
+app.delete('/api/admin/coupons/:id', requireAdmin, async (request, response) => {
+  await database.prepare('DELETE FROM coupons WHERE id = ?').run(Number(request.params.id))
+  response.json({ coupons: (await database.prepare(`${couponSelect} ORDER BY id DESC`).all()) })
 })
 
 app.post('/api/orders', resolveCheckoutUser, async (request, response) => {
@@ -1483,23 +1249,23 @@ app.post('/api/orders', resolveCheckoutUser, async (request, response) => {
     if (request.body.acceptTerms !== true) throw new Error('Debes aceptar los términos y condiciones para continuar.')
     if (!transferDetails()) throw new Error('Las transferencias no están disponibles por el momento.')
     const quotedShippingArs = await resolveQuotedShipping(request)
-    const result = createOrderRecord(request, request.body.items, request.body.shipping, { paymentMethod: 'transfer', quotedShippingArs })
+    const result = (await createOrderRecord(request, request.body.items, request.body.shipping, { paymentMethod: 'transfer', quotedShippingArs }))
     result.order.paymentMethod = 'transfer'
     if (result.order.totalArs <= 0) {
-      markOrderPaidWithoutCharge(result.order, request.user.id)
+      await markOrderPaidWithoutCharge(result.order, request.user.id)
       return response.status(201).json(result)
     }
     result.order.transfer = transferDetails()
-    void sendOrderEmail(result.order.id, 'created')
+    void sendOrderEmail(result.order.id, 'created').catch((error) => console.error('Could not send order email:', error))
     response.status(201).json(result)
   } catch (error) {
     response.status(400).json({ error: error.message || 'No se pudo registrar el pedido.' })
   }
 })
 
-app.get('/api/account/notifications', requireAuth, (request, response) => {
-  database.prepare('DELETE FROM notifications WHERE user_id = ? AND is_read = 1').run(request.user.id)
-  const notifications = database.prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 20').all(request.user.id)
+app.get('/api/account/notifications', requireAuth, async (request, response) => {
+  await database.prepare('DELETE FROM notifications WHERE user_id = ? AND is_read = 1').run(request.user.id)
+  const notifications = (await database.prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 20').all(request.user.id))
   response.json({ notifications: notifications.map((notification) => ({
     id: notification.id,
     kind: notification.kind,
@@ -1511,29 +1277,29 @@ app.get('/api/account/notifications', requireAuth, (request, response) => {
   })) })
 })
 
-app.patch('/api/account/notifications/:id/read', requireAuth, (request, response) => {
+app.patch('/api/account/notifications/:id/read', requireAuth, async (request, response) => {
   const id = Number(request.params.id)
   if (!Number.isSafeInteger(id) || id < 1) return response.status(400).json({ error: 'Notificación inválida.' })
-  const result = database.prepare('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?').run(id, request.user.id)
+  const result = (await database.prepare('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?').run(id, request.user.id))
   if (!result.changes) return response.status(404).json({ error: 'Notificación no encontrada.' })
   response.json({ ok: true })
 })
 
-app.post('/api/newsletter', (request, response) => {
+app.post('/api/newsletter', async (request, response) => {
   const email = typeof request.body.email === 'string' ? request.body.email.trim().toLowerCase() : ''
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return response.status(400).json({ error: 'Escribe un correo válido.' })
   try {
-    database.prepare('INSERT OR IGNORE INTO newsletter_subscribers (email) VALUES (?)').run(email)
+    await database.prepare('INSERT INTO newsletter_subscribers (email) VALUES (?) ON DUPLICATE KEY UPDATE email = email').run(email)
     response.json({ ok: true, message: 'Gracias. Ya estás en la lista de UnFocus.' })
   } catch {
     response.status(500).json({ error: 'No se pudo completar la suscripción.' })
   }
 })
 
-app.post('/api/newsletter/unsubscribe', (request, response) => {
+app.post('/api/newsletter/unsubscribe', async (request, response) => {
   const email = typeof request.body.email === 'string' ? request.body.email.trim().toLowerCase() : ''
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return response.status(400).json({ error: 'Escribe un correo válido.' })
-  database.prepare('DELETE FROM newsletter_subscribers WHERE email = ?').run(email)
+  await database.prepare('DELETE FROM newsletter_subscribers WHERE email = ?').run(email)
   // Misma respuesta exista o no la suscripción, para no revelar qué correos están suscriptos.
   response.json({ ok: true, message: 'Listo. Si el correo estaba suscripto, ya no recibirá novedades de UnFocus.' })
 })
@@ -1548,7 +1314,7 @@ app.post('/api/contact', async (request, response) => {
   if (subject.length < 3 || subject.length > 120) return response.status(400).json({ error: 'El asunto debe tener entre 3 y 120 caracteres.' })
   if (message.length < 10 || message.length > 4000) return response.status(400).json({ error: 'El mensaje debe tener entre 10 y 4000 caracteres.' })
 
-  const result = database.prepare('INSERT INTO contact_messages (name, email, subject, message) VALUES (?, ?, ?, ?)').run(name, email, subject, message)
+  const result = (await database.prepare('INSERT INTO contact_messages (name, email, subject, message) VALUES (?, ?, ?, ?)').run(name, email, subject, message))
   const messageId = Number(result.lastInsertRowid)
   const toEmail = process.env.CONTACT_TO_EMAIL?.trim() || process.env.ADMIN_EMAIL?.trim()
   const emailSent = await sendMail({
@@ -1558,7 +1324,7 @@ app.post('/api/contact', async (request, response) => {
     replyTo: email,
     fromName: 'UnFocus · Contacto',
   })
-  if (emailSent) database.prepare('UPDATE contact_messages SET email_sent = 1 WHERE id = ?').run(messageId)
+  if (emailSent) await database.prepare('UPDATE contact_messages SET email_sent = 1 WHERE id = ?').run(messageId)
 
   response.status(201).json({
     ok: true,
@@ -1569,41 +1335,41 @@ app.post('/api/contact', async (request, response) => {
   })
 })
 
-app.get('/api/admin/newsletter', requireAdmin, (_request, response) => {
-  const subscribers = database.prepare('SELECT id, email, created_at AS createdAt FROM newsletter_subscribers ORDER BY created_at DESC').all()
+app.get('/api/admin/newsletter', requireAdmin, async (_request, response) => {
+  const subscribers = (await database.prepare('SELECT id, email, created_at AS createdAt FROM newsletter_subscribers ORDER BY created_at DESC').all())
   response.json({ subscribers })
 })
 
-app.delete('/api/admin/newsletter/:id', requireAdmin, (request, response) => {
+app.delete('/api/admin/newsletter/:id', requireAdmin, async (request, response) => {
   const id = Number(request.params.id)
   if (!Number.isSafeInteger(id) || id < 1) return response.status(400).json({ error: 'Suscriptor inválido.' })
-  const result = database.prepare('DELETE FROM newsletter_subscribers WHERE id = ?').run(id)
+  const result = (await database.prepare('DELETE FROM newsletter_subscribers WHERE id = ?').run(id))
   if (!result.changes) return response.status(404).json({ error: 'Suscriptor no encontrado.' })
   response.json({ ok: true })
 })
 
-app.get('/api/admin/contact-messages', requireAdmin, (_request, response) => {
-  const messages = database.prepare('SELECT id, name, email, subject, message, is_read AS isRead, email_sent AS emailSent, created_at AS createdAt FROM contact_messages ORDER BY created_at DESC LIMIT 100').all()
+app.get('/api/admin/contact-messages', requireAdmin, async (_request, response) => {
+  const messages = (await database.prepare('SELECT id, name, email, subject, message, is_read AS isRead, email_sent AS emailSent, created_at AS createdAt FROM contact_messages ORDER BY created_at DESC LIMIT 100').all())
   response.json({ messages: messages.map((message) => ({ ...message, isRead: Boolean(message.isRead), emailSent: Boolean(message.emailSent) })) })
 })
 
-app.patch('/api/admin/contact-messages/:id/read', requireAdmin, (request, response) => {
+app.patch('/api/admin/contact-messages/:id/read', requireAdmin, async (request, response) => {
   const id = Number(request.params.id)
   if (!Number.isSafeInteger(id) || id < 1) return response.status(400).json({ error: 'Mensaje inválido.' })
-  const result = database.prepare('UPDATE contact_messages SET is_read = 1 WHERE id = ?').run(id)
+  const result = (await database.prepare('UPDATE contact_messages SET is_read = 1 WHERE id = ?').run(id))
   if (!result.changes) return response.status(404).json({ error: 'Mensaje no encontrado.' })
   response.json({ ok: true })
 })
 
-app.get('/api/admin/summary', requireAdmin, (_request, response) => {
-  const summary = database.prepare(`
+app.get('/api/admin/summary', requireAdmin, async (_request, response) => {
+  const summary = (await database.prepare(`
     SELECT
       (SELECT COUNT(*) FROM products) AS products,
       (SELECT COUNT(*) FROM orders) AS orders,
       (SELECT COUNT(*) FROM orders WHERE status = 'pending_payment') AS pending,
       (SELECT COUNT(*) FROM orders WHERE status = 'paid') AS paid,
       (SELECT COALESCE(SUM(total_ars), 0) FROM orders WHERE status = 'paid') AS totalRevenue
-  `).get()
+  `).get())
   response.json({
     products: Number(summary.products),
     orders: Number(summary.orders),
@@ -1615,25 +1381,25 @@ app.get('/api/admin/summary', requireAdmin, (_request, response) => {
 
 const lowStockThreshold = 3
 
-app.get('/api/admin/reports', requireAdmin, (request, response) => {
+app.get('/api/admin/reports', requireAdmin, async (request, response) => {
   const days = [7, 30, 90].includes(Number(request.query.days)) ? Number(request.query.days) : 30
-  const since = `-${days} days`
-  const totals = database.prepare(`
+  const since = utcDaysAgo(days)
+  const totals = (await database.prepare(`
     SELECT COUNT(*) AS orders, COALESCE(SUM(total_ars), 0) AS revenue
-    FROM orders WHERE status IN ('paid', 'shipped', 'delivered') AND created_at >= datetime('now', ?)
-  `).get(since)
-  const daily = database.prepare(`
+    FROM orders WHERE status IN ('paid', 'shipped', 'delivered') AND created_at >= ?
+  `).get(since))
+  const daily = (await database.prepare(`
     SELECT date(created_at) AS day, COUNT(*) AS orders, SUM(total_ars) AS revenue
-    FROM orders WHERE status IN ('paid', 'shipped', 'delivered') AND created_at >= datetime('now', ?)
+    FROM orders WHERE status IN ('paid', 'shipped', 'delivered') AND created_at >= ?
     GROUP BY day ORDER BY day DESC
-  `).all(since)
-  const topProducts = database.prepare(`
+  `).all(since))
+  const topProducts = (await database.prepare(`
     SELECT oi.product_name AS name, SUM(oi.quantity) AS units, SUM(oi.quantity * oi.unit_price_ars) AS revenue
     FROM order_items oi JOIN orders o ON o.id = oi.order_id
-    WHERE o.status IN ('paid', 'shipped', 'delivered') AND o.created_at >= datetime('now', ?)
+    WHERE o.status IN ('paid', 'shipped', 'delivered') AND o.created_at >= ?
     GROUP BY oi.product_name ORDER BY units DESC, revenue DESC LIMIT 10
-  `).all(since)
-  const lowStock = allProducts.all().map(productFromRow)
+  `).all(since))
+  const lowStock = (await allProducts.all()).map(productFromRow)
     .filter((product) => !product.isGiftCard)
     .flatMap((product) => Object.entries(product.stockBySize)
       .filter(([, stock]) => Number(stock) <= lowStockThreshold)
@@ -1651,15 +1417,15 @@ app.get('/api/admin/reports', requireAdmin, (request, response) => {
   })
 })
 
-app.get('/api/admin/orders', requireAdmin, (_request, response) => {
-  const orderRows = database.prepare(`
+app.get('/api/admin/orders', requireAdmin, async (_request, response) => {
+  const orderRows = (await database.prepare(`
     SELECT o.*, u.name AS user_name, u.email AS user_email
     FROM orders o
     JOIN users u ON u.id = o.user_id
     ORDER BY o.created_at DESC
     LIMIT 50
-  `).all()
-  const orders = orderRows.map((order) => serializeOrder(order, { userName: order.user_name, userEmail: order.user_email }))
+  `).all())
+  const orders = await Promise.all(orderRows.map((order) => serializeOrder(order, { userName: order.user_name, userEmail: order.user_email })))
   response.json({ orders })
 })
 
@@ -1667,7 +1433,7 @@ const orderStatuses = ['pending_payment', 'paid', 'shipped', 'delivered', 'cance
 
 app.get('/api/admin/settings', requireAdmin, (_request, response) => response.json({ settings: storeSettings }))
 
-app.put('/api/admin/settings', requireAdmin, (request, response) => {
+app.put('/api/admin/settings', requireAdmin, async (request, response) => {
   const next = {}
   for (const key of settingKeys) {
     const raw = request.body?.[key]
@@ -1680,47 +1446,50 @@ app.put('/api/admin/settings', requireAdmin, (request, response) => {
     }
   }
   if (next.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next.email)) return response.status(400).json({ error: 'Escribe un correo de contacto válido.' })
-  const upsert = database.prepare('INSERT INTO store_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
-  for (const key of settingKeys) upsert.run(key, String(next[key]))
+  const upsert = database.prepare('INSERT INTO store_settings (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)')
+  for (const key of settingKeys) await upsert.run(key, String(next[key]))
   Object.assign(storeSettings, next)
   response.json({ settings: storeSettings })
 })
 
-app.patch('/api/admin/orders/:id/status', requireAdmin, (request, response) => {
+app.patch('/api/admin/orders/:id/status', requireAdmin, async (request, response) => {
   const id = Number(request.params.id)
   const status = typeof request.body.status === 'string' ? request.body.status : ''
   if (!Number.isSafeInteger(id)) return response.status(400).json({ error: 'Pedido inválido.' })
   if (!orderStatuses.includes(status)) return response.status(400).json({ error: 'Estado de pedido inválido.' })
-  const order = database.prepare('SELECT id, user_id, reference, status, tracking_code, carrier, tracking_url FROM orders WHERE id = ?').get(id)
-  if (!order) return response.status(404).json({ error: 'Pedido no encontrado.' })
-  const fulfilled = ['paid', 'shipped', 'delivered']
-  if ((status === 'shipped' || status === 'delivered') && !fulfilled.includes(order.status)) return response.status(400).json({ error: 'Solo se pueden despachar pedidos pagados.' })
-  const carrier = cleanText(request.body.carrier, 60) || order.carrier || ''
-  const trackingCode = cleanText(request.body.trackingCode, 80) || order.tracking_code || ''
-  const trackingUrl = cleanText(request.body.trackingUrl, 300) || order.tracking_url || ''
-  if (trackingUrl && !/^https?:\/\//i.test(trackingUrl)) return response.status(400).json({ error: 'El enlace de seguimiento debe comenzar con http:// o https://.' })
-  const changed = order.status !== status
-  if (changed && status === 'cancelled') adjustOrderStock(id, 1)
-  if (changed && order.status === 'cancelled') adjustOrderStock(id, -1)
-  if (status === 'shipped') {
-    database.prepare("UPDATE orders SET status = ?, carrier = ?, tracking_code = ?, tracking_url = ?, shipped_at = COALESCE(shipped_at, CURRENT_TIMESTAMP) WHERE id = ?").run(status, carrier, trackingCode, trackingUrl, id)
-  } else {
-    database.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, id)
+  let result
+  try {
+    result = await database.transaction(async () => {
+      const order = await database.prepare('SELECT id, user_id, reference, status, tracking_code, carrier, tracking_url FROM orders WHERE id = ? FOR UPDATE').get(id)
+      if (!order) return { error: 'Pedido no encontrado.', statusCode: 404 }
+      const fulfilled = ['paid', 'shipped', 'delivered']
+      if ((status === 'shipped' || status === 'delivered') && !fulfilled.includes(order.status)) return { error: 'Solo se pueden despachar pedidos pagados.', statusCode: 400 }
+      const carrier = cleanText(request.body.carrier, 60) || order.carrier || ''
+      const trackingCode = cleanText(request.body.trackingCode, 80) || order.tracking_code || ''
+      const trackingUrl = cleanText(request.body.trackingUrl, 300) || order.tracking_url || ''
+      if (trackingUrl && !/^https?:\/\//i.test(trackingUrl)) return { error: 'El enlace de seguimiento debe comenzar con http:// o https://.', statusCode: 400 }
+      const changed = order.status !== status
+      if (changed && status === 'cancelled') await adjustOrderStock(id, 1)
+      if (changed && order.status === 'cancelled') await adjustOrderStock(id, -1)
+      if (status === 'shipped') {
+        await database.prepare("UPDATE orders SET status = ?, carrier = ?, tracking_code = ?, tracking_url = ?, shipped_at = COALESCE(shipped_at, CURRENT_TIMESTAMP) WHERE id = ?").run(status, carrier, trackingCode, trackingUrl, id)
+      } else {
+        await database.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, id)
+      }
+      if (changed && status === 'paid') await issueGiftCards(id)
+      if (changed && status === 'paid') await createNotification(order.user_id, 'order_paid', 'Compra confirmada', `Tu pedido ${order.reference} fue confirmado.`, order.id)
+      if (changed && status === 'shipped') await createNotification(order.user_id, 'order_shipped', 'Pedido en camino', `Tu pedido ${order.reference} fue despachado.${trackingCode ? ` Seguimiento: ${trackingCode}.` : ''}`, order.id)
+      if (changed && status === 'delivered') await createNotification(order.user_id, 'order_delivered', 'Pedido entregado', `Tu pedido ${order.reference} figura como entregado.`, order.id)
+      if (changed && status === 'cancelled') await createNotification(order.user_id, 'order_cancelled', 'Pedido cancelado', `Tu pedido ${order.reference} fue cancelado.`, order.id)
+      return { carrier, trackingCode, trackingUrl, changed }
+    })
+  } catch (error) {
+    if (error instanceof OrderAdjustmentError) return response.status(409).json({ error: error.message })
+    throw error
   }
-  if (changed && status === 'paid') {
-    createNotification(order.user_id, 'order_paid', 'Compra confirmada', `Tu pedido ${order.reference} fue confirmado.`, order.id)
-    void sendOrderEmail(id, 'paid')
-  }
-  if (changed && status === 'shipped') {
-    createNotification(order.user_id, 'order_shipped', 'Pedido en camino', `Tu pedido ${order.reference} fue despachado.${trackingCode ? ` Seguimiento: ${trackingCode}.` : ''}`, order.id)
-    void sendOrderEmail(id, 'shipped')
-  }
-  if (changed && status === 'delivered') createNotification(order.user_id, 'order_delivered', 'Pedido entregado', `Tu pedido ${order.reference} figura como entregado.`, order.id)
-  if (changed && status === 'cancelled') {
-    createNotification(order.user_id, 'order_cancelled', 'Pedido cancelado', `Tu pedido ${order.reference} fue cancelado.`, order.id)
-    void sendOrderEmail(id, 'cancelled')
-  }
-  response.json({ ok: true, status, carrier, trackingCode, trackingUrl })
+  if (result.error) return response.status(result.statusCode).json({ error: result.error })
+  if (result.changed && ['paid', 'shipped', 'cancelled'].includes(status)) void sendOrderEmail(id, status).catch((error) => console.error('Could not send order email:', error))
+  response.json({ ok: true, status, carrier: result.carrier, trackingCode: result.trackingCode, trackingUrl: result.trackingUrl })
 })
 
 const correoArgentinoConfig = readCorreoArgentinoConfig()
@@ -1736,10 +1505,10 @@ const correoArgentinoRoute = (handler) => async (request, response) => {
   }
 }
 
-const loadCorreoArgentinoOrder = (request) => {
+const loadCorreoArgentinoOrder = async (request) => {
   const id = Number(request.params.id)
   if (!Number.isSafeInteger(id)) throw new CorreoArgentinoError('Pedido inválido.', 400)
-  const order = database.prepare('SELECT o.*, u.email AS user_email FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id = ?').get(id)
+  const order = (await database.prepare('SELECT o.*, u.email AS user_email FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id = ?').get(id))
   if (!order) throw new CorreoArgentinoError('Pedido no encontrado.', 404)
   return order
 }
@@ -1760,18 +1529,18 @@ app.get('/api/admin/correo-argentino/agencies', requireAdmin, correoArgentinoRou
 }))
 
 app.post('/api/admin/orders/:id/correo-argentino', requireAdmin, correoArgentinoRoute(async (request, response) => {
-  const order = loadCorreoArgentinoOrder(request)
+  const order = (await loadCorreoArgentinoOrder(request))
   if (order.status !== 'paid') throw new CorreoArgentinoError('Solo se puede generar el envío de pedidos pagados.', 400)
   if (order.shipping_method !== 'delivery') throw new CorreoArgentinoError('El pedido no es un envío a domicilio.', 400)
   if (order.ca_tracking_number) throw new CorreoArgentinoError('El pedido ya tiene un envío generado en Correo Argentino.', 400)
   const { trackingNumber } = await correoArgentino.createOrder(buildOrderPayload(correoArgentinoConfig, order))
   const trackingUrl = correoArgentinoTrackingUrl(trackingNumber)
-  database.prepare('UPDATE orders SET ca_tracking_number = ?, carrier = ?, tracking_code = ?, tracking_url = ? WHERE id = ?').run(trackingNumber, 'Correo Argentino', trackingNumber, trackingUrl, order.id)
+  await database.prepare('UPDATE orders SET ca_tracking_number = ?, carrier = ?, tracking_code = ?, tracking_url = ? WHERE id = ?').run(trackingNumber, 'Correo Argentino', trackingNumber, trackingUrl, order.id)
   response.json({ ok: true, carrier: 'Correo Argentino', trackingCode: trackingNumber, trackingUrl })
 }))
 
 app.get('/api/admin/orders/:id/correo-argentino/label', requireAdmin, correoArgentinoRoute(async (request, response) => {
-  const order = loadCorreoArgentinoOrder(request)
+  const order = (await loadCorreoArgentinoOrder(request))
   if (!order.ca_tracking_number) throw new CorreoArgentinoError('El pedido no tiene un envío generado en Correo Argentino.', 400)
   const { pdf, fileName } = await correoArgentino.getLabel(order.ca_tracking_number, '', request.query.format === 'label' ? 'label' : '10x15')
   response.setHeader('Content-Type', 'application/pdf')
@@ -1780,17 +1549,17 @@ app.get('/api/admin/orders/:id/correo-argentino/label', requireAdmin, correoArge
 }))
 
 app.get('/api/admin/orders/:id/correo-argentino/tracking', requireAdmin, correoArgentinoRoute(async (request, response) => {
-  const order = loadCorreoArgentinoOrder(request)
+  const order = (await loadCorreoArgentinoOrder(request))
   if (!order.ca_tracking_number) throw new CorreoArgentinoError('El pedido no tiene un envío generado en Correo Argentino.', 400)
   response.json(await correoArgentino.getTracking(order.ca_tracking_number))
 }))
 
 app.post('/api/admin/orders/:id/correo-argentino/cancel', requireAdmin, correoArgentinoRoute(async (request, response) => {
-  const order = loadCorreoArgentinoOrder(request)
+  const order = (await loadCorreoArgentinoOrder(request))
   if (!order.ca_tracking_number) throw new CorreoArgentinoError('El pedido no tiene un envío generado en Correo Argentino.', 400)
   if (order.status === 'shipped' || order.status === 'delivered') throw new CorreoArgentinoError('El pedido ya fue despachado y no se puede cancelar el envío.', 400)
   await correoArgentino.cancelOrder(order.ca_tracking_number)
-  database.prepare("UPDATE orders SET ca_tracking_number = NULL, carrier = '', tracking_code = '', tracking_url = '' WHERE id = ?").run(order.id)
+  await database.prepare("UPDATE orders SET ca_tracking_number = NULL, carrier = '', tracking_code = '', tracking_url = '' WHERE id = ?").run(order.id)
   response.json({ ok: true })
 }))
 
@@ -1807,10 +1576,10 @@ const miCorreoRoute = (handler) => async (request, response) => {
   }
 }
 
-const physicalQuantity = (items, userId) => buildOrderFromItems(items, userId).orderItems.reduce((sum, item) => sum + (item.product.isGiftCard ? 0 : item.quantity), 0)
+const physicalQuantity = async (items, userId) => (await buildOrderFromItems(items, userId)).orderItems.reduce((sum, item) => sum + (item.product.isGiftCard ? 0 : item.quantity), 0)
 
 const quoteDelivery = async (items, postalCode, userId) => {
-  const quantity = physicalQuantity(items, userId)
+  const quantity = (await physicalQuantity(items, userId))
   if (!quantity) return []
   return miCorreo.getRates({ postalCodeDestination: postalCode, dimensions: buildDimensions(miCorreoConfig, quantity), deliveredType: 'D' })
 }
@@ -1859,47 +1628,47 @@ app.get('/api/admin/micorreo/agencies', requireAdmin, miCorreoRoute(async (reque
 }))
 
 app.post('/api/admin/orders/:id/micorreo/import', requireAdmin, miCorreoRoute(async (request, response) => {
-  const order = loadCorreoArgentinoOrder(request)
+  const order = (await loadCorreoArgentinoOrder(request))
   if (order.status !== 'paid') throw new MiCorreoError('Solo se puede importar a MiCorreo un pedido pagado.', 400)
   if (order.shipping_method !== 'delivery') throw new MiCorreoError('El pedido no es un envío a domicilio.', 400)
   if (order.mc_imported_at) throw new MiCorreoError('El pedido ya fue importado a MiCorreo.', 400)
-  const quantity = database.prepare('SELECT COALESCE(SUM(quantity), 0) AS quantity FROM order_items WHERE order_id = ?').get(order.id).quantity
+  const quantity = (await database.prepare('SELECT COALESCE(SUM(quantity), 0) AS quantity FROM order_items WHERE order_id = ?').get(order.id)).quantity
   const payload = buildImportPayload(order, { sender: correoArgentinoConfig.sender, dimensions: buildDimensions(miCorreoConfig, quantity || 1) })
   await miCorreo.importShipping(payload)
-  database.prepare("UPDATE orders SET mc_imported_at = datetime('now') WHERE id = ?").run(order.id)
+  await database.prepare('UPDATE orders SET mc_imported_at = CURRENT_TIMESTAMP WHERE id = ?').run(order.id)
   response.json({ ok: true })
 }))
 
 // shippingId = código de seguimiento que MiCorreo asigna al despachar; se carga en el pedido al marcarlo como enviado.
 app.get('/api/admin/orders/:id/micorreo/tracking', requireAdmin, miCorreoRoute(async (request, response) => {
-  const order = loadCorreoArgentinoOrder(request)
+  const order = (await loadCorreoArgentinoOrder(request))
   if (!order.tracking_code) throw new MiCorreoError('El pedido todavía no tiene código de seguimiento.', 400)
   response.json(await miCorreo.getTracking(order.tracking_code))
 }))
 
-app.get('/api/products/:slug/reviews', (request, response) => {
-  const product = selectProductBySlug.get(request.params.slug)
+app.get('/api/products/:slug/reviews', async (request, response) => {
+  const product = (await selectProductBySlug.get(request.params.slug))
   if (!product) return response.status(404).json({ error: 'Producto no encontrado.' })
-  const reviews = database.prepare(`
+  const reviews = (await database.prepare(`
     SELECT pr.id, u.name AS userName, pr.rating, pr.comment, pr.created_at AS createdAt
     FROM product_reviews pr
     JOIN users u ON u.id = pr.user_id
     WHERE pr.product_id = ?
     ORDER BY pr.created_at DESC
     LIMIT 20
-  `).all(product.id)
+  `).all(product.id))
   response.json({ reviews })
 })
 
-app.post('/api/products/:slug/reviews', requireAuth, (request, response) => {
-  const product = selectProductBySlug.get(request.params.slug)
+app.post('/api/products/:slug/reviews', requireAuth, async (request, response) => {
+  const product = (await selectProductBySlug.get(request.params.slug))
   if (!product) return response.status(404).json({ error: 'Producto no encontrado.' })
   const rating = Number(request.body.rating)
   const comment = typeof request.body.comment === 'string' ? request.body.comment.trim() : ''
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) return response.status(400).json({ error: 'La valoración debe estar entre 1 y 5.' })
   if (comment.length < 10 || comment.length > 500) return response.status(400).json({ error: 'El comentario debe tener entre 10 y 500 caracteres.' })
   try {
-    database.prepare('INSERT INTO product_reviews (product_id, user_id, rating, comment) VALUES (?, ?, ?, ?)')
+    await database.prepare('INSERT INTO product_reviews (product_id, user_id, rating, comment) VALUES (?, ?, ?, ?)')
       .run(product.id, request.user.id, rating, comment)
     response.status(201).json({ ok: true })
   } catch {
@@ -1914,9 +1683,9 @@ app.post('/api/payments/create-preference', resolveCheckoutUser, async (request,
   try {
     if (request.body.acceptTerms !== true) throw new Error('Debes aceptar los términos y condiciones para continuar.')
     const quotedShippingArs = await resolveQuotedShipping(request)
-    order = createOrderRecord(request, request.body.items, request.body.shipping, { notify: false, quotedShippingArs })
+    order = (await createOrderRecord(request, request.body.items, request.body.shipping, { notify: false, quotedShippingArs }))
     if (order.order.totalArs <= 0) {
-      markOrderPaidWithoutCharge(order.order, request.user.id)
+      await markOrderPaidWithoutCharge(order.order, request.user.id)
       return response.json({ order: order.order, paymentUrl: null, initPoint: null })
     }
     const baseUrl = process.env.MP_RETURN_URL?.trim() || publicBaseUrl
@@ -1949,9 +1718,9 @@ app.post('/api/payments/create-preference', resolveCheckoutUser, async (request,
     const formattedPreference = await preference.create({ body: preferenceBody })
     const paymentUrl = mercadoPagoIsTestMode ? formattedPreference.sandbox_init_point : formattedPreference.init_point
     if (!paymentUrl) throw new Error('Mercado Pago no devolvió el enlace de pago esperado para estas credenciales.')
-    database.prepare('UPDATE orders SET payment_url = ? WHERE id = ?').run(paymentUrl, order.order.id)
-    createNotification(request.user.id, 'order_created', 'Pedido registrado', `Tu pedido ${order.order.reference} quedó registrado y está pendiente de pago.`, order.order.id)
-    void sendOrderEmail(order.order.id, 'created')
+    await database.prepare('UPDATE orders SET payment_url = ? WHERE id = ?').run(paymentUrl, order.order.id)
+    await createNotification(request.user.id, 'order_created', 'Pedido registrado', `Tu pedido ${order.order.reference} quedó registrado y está pendiente de pago.`, order.order.id)
+    void sendOrderEmail(order.order.id, 'created').catch((error) => console.error('Could not send order email:', error))
     response.json({
       order: order.order,
       paymentUrl,
@@ -1960,7 +1729,7 @@ app.post('/api/payments/create-preference', resolveCheckoutUser, async (request,
   } catch (error) {
     if (order?.order.id) {
       try {
-        cancelPendingOrderAndRestoreStock(order.order.id, { removeOrder: true })
+        await cancelPendingOrderAndRestoreStock(order.order.id, { removeOrder: true })
       } catch (rollbackError) {
         console.error('Could not release stock after payment preference failure:', rollbackError)
       }
@@ -1986,54 +1755,45 @@ const hasValidWebhookSignature = (request, dataId) => {
   return expected.length === received.length && timingSafeEqual(Buffer.from(expected), Buffer.from(received))
 }
 
-const applyMercadoPagoPayment = (payment, resource) => {
+const applyMercadoPagoPayment = async (payment, resource) => {
   const reference = payment.external_reference
   if (!reference) return null
-  const order = database.prepare('SELECT id, user_id, total_ars, status FROM orders WHERE reference = ?').get(reference)
-  if (!order) return null
   const paymentId = String(payment.id ?? resource)
   const paymentStatus = String(payment.status ?? '').toLowerCase()
   if (!paymentStatus) throw new Error('Mercado Pago no devolvió el estado del pago.')
-  const transactionAmount = Number(payment.transaction_amount)
-  if (payment.currency_id !== 'ARS' || !Number.isFinite(transactionAmount) || Math.round(transactionAmount * 100) !== order.total_ars * 100) {
-    throw new Error('El importe o la moneda del pago no coincide con el pedido.')
-  }
-  database.prepare(`
-    INSERT INTO payment_attempts (payment_id, order_id, status, status_detail)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(payment_id) DO UPDATE SET
-      status = excluded.status,
-      status_detail = excluded.status_detail,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE payment_attempts.order_id = excluded.order_id
-  `).run(paymentId, order.id, paymentStatus, payment.status_detail ?? null)
-
-  if (paymentStatus === 'approved') {
-    database.exec('BEGIN IMMEDIATE')
+  const result = await database.transaction(async () => {
+    const order = await database.prepare('SELECT id, user_id, total_ars, status FROM orders WHERE reference = ? FOR UPDATE').get(reference)
+    if (!order) return null
+    const transactionAmount = Number(payment.transaction_amount)
+    if (payment.currency_id !== 'ARS' || !Number.isFinite(transactionAmount) || Math.round(transactionAmount * 100) !== Number(order.total_ars) * 100) {
+      throw new Error('El importe o la moneda del pago no coincide con el pedido.')
+    }
+    await database.prepare(paymentAttemptUpsertSql()).run(paymentId, order.id, paymentStatus, payment.status_detail ?? null)
+    const attempt = await database.prepare('SELECT order_id FROM payment_attempts WHERE payment_id = ? FOR UPDATE').get(paymentId)
+    if (String(attempt.order_id) !== String(order.id)) throw new Error('El pago ya pertenece a otro pedido.')
     let becamePaid = false
-    try {
-      const currentOrder = database.prepare('SELECT id, user_id, reference, status FROM orders WHERE id = ?').get(order.id)
-      if (currentOrder && ['pending_payment', 'cancelled'].includes(currentOrder.status)) {
-        if (currentOrder.status === 'cancelled') adjustOrderStock(order.id, -1)
-        database.prepare("UPDATE orders SET status = 'paid' WHERE id = ?").run(order.id)
-        createNotification(order.user_id, 'order_paid', 'Compra confirmada', `Tu pedido ${reference} fue confirmado.`, order.id)
+    if (paymentStatus === 'approved') {
+      if (['pending_payment', 'cancelled'].includes(order.status)) {
+        if (order.status === 'cancelled') await adjustOrderStock(order.id, -1)
+        await database.prepare("UPDATE orders SET status = 'paid' WHERE id = ?").run(order.id)
+        await issueGiftCards(order.id)
+        await createNotification(order.user_id, 'order_paid', 'Compra confirmada', `Tu pedido ${reference} fue confirmado.`, order.id)
         becamePaid = true
       }
-      database.exec('COMMIT')
-      if (becamePaid) void sendOrderEmail(order.id, 'paid')
-    } catch (error) {
-      database.exec('ROLLBACK')
-      throw error
     }
-  } else if (paymentStatus === 'rejected' || paymentStatus === 'cancelled') {
-    const attempts = database.prepare(`
+    return { orderId: order.id, becamePaid }
+  })
+  if (!result) return null
+  if (result.becamePaid) void sendOrderEmail(result.orderId, 'paid').catch((error) => console.error('Could not send order email:', error))
+  if (paymentStatus === 'rejected' || paymentStatus === 'cancelled') {
+    const attempts = (await database.prepare(`
       SELECT COUNT(*) AS total,
         SUM(CASE WHEN status IN ('rejected', 'cancelled') THEN 1 ELSE 0 END) AS negative
       FROM payment_attempts WHERE order_id = ?
-    `).get(order.id)
-    if (attempts.total > 3 && attempts.total === attempts.negative) cancelPendingOrderAndRestoreStock(order.id)
+    `).get(result.orderId))
+    if (attempts.total > 3 && Number(attempts.total) === Number(attempts.negative)) await cancelPendingOrderAndRestoreStock(result.orderId)
   }
-  const currentOrder = database.prepare('SELECT id, status FROM orders WHERE id = ?').get(order.id)
+  const currentOrder = (await database.prepare('SELECT id, status FROM orders WHERE id = ?').get(result.orderId))
   return { orderId: currentOrder.id, orderStatus: currentOrder.status, paymentStatus }
 }
 
@@ -2050,7 +1810,7 @@ app.get('/api/payments/verify-return', async (request, response) => {
       return response.status(502).json({ error: 'No se pudo verificar el pago con Mercado Pago.' })
     }
     const payment = await paymentResponse.json()
-    const result = applyMercadoPagoPayment(payment, paymentId)
+    const result = (await applyMercadoPagoPayment(payment, paymentId))
     if (!result) return response.status(404).json({ error: 'No se encontró el pedido asociado al pago.' })
     response.json(result)
   } catch (error) {
@@ -2074,15 +1834,17 @@ app.post('/api/payments/webhook', async (request, response) => {
     })
     if (!paymentResponse.ok) throw new Error('No se pudo consultar el pago')
     const payment = await paymentResponse.json()
-    applyMercadoPagoPayment(payment, resource)
+    await applyMercadoPagoPayment(payment, resource)
     response.json({ ok: true })
-  } catch {
+  } catch (error) {
+    console.error('Could not process Mercado Pago webhook:', error)
     response.status(500).json({ ok: false })
   }
 })
 
 app.use((error, _request, response, _next) => {
   if (response.headersSent) return
+  console.error('Unhandled API error:', error)
   const status = error.status === 413 ? 413 : 500
   response.status(status).json({ error: status === 413 ? 'La solicitud supera el tamaño permitido.' : 'Error interno del servidor.' })
 })
@@ -2101,8 +1863,8 @@ if (isProduction) {
     faq: 'Preguntas y respuestas',
   }
   app.get('/robots.txt', (_request, response) => response.type('text/plain').send(buildRobotsTxt(seoBaseUrl)))
-  app.get('/sitemap.xml', (_request, response) => response.type('application/xml').send(buildSitemapXml(seoBaseUrl, allProducts.all().map(productFromRow), legalPageSlugs)))
-  app.get('/llms.txt', (_request, response) => response.type('text/plain').send(buildLlmsTxt(seoBaseUrl, allProducts.all().map(productFromRow))))
+  app.get('/sitemap.xml', async (_request, response) => response.type('application/xml').send(buildSitemapXml(seoBaseUrl, (await allProducts.all()).map(productFromRow), legalPageSlugs)))
+  app.get('/llms.txt', async (_request, response) => response.type('text/plain').send(buildLlmsTxt(seoBaseUrl, (await allProducts.all()).map(productFromRow))))
   app.get('/.well-known/mcp/server-card.json', (_request, response) => response.json(buildMcpServerCard(seoBaseUrl)))
   app.use(express.static(path.join(projectDirectory, 'dist'), {
     index: false,
@@ -2115,9 +1877,9 @@ if (isProduction) {
     },
   }))
   app.get(/^(?!\/api\/).*/, async (request, response) => {
-    const products = allProducts.all().map(productFromRow)
+    const products = (await allProducts.all()).map(productFromRow)
     const slug = typeof request.query.producto === 'string' ? request.query.producto : ''
-    const row = slug ? selectProductBySlug.get(slug) : null
+    const row = slug ? (await selectProductBySlug.get(slug)) : null
     const product = row ? productFromRow(row) : null
     const legalPage = typeof request.query.legal === 'string' ? request.query.legal : request.query.contacto === '1' ? 'contact' : null
     const aboutPage = request.query.sobre === '1'
@@ -2240,15 +2002,15 @@ if (isProduction) {
 
 await new Promise((resolve) => app.listen(port, '0.0.0.0', resolve))
 console.log(`UnFocus API listening on http://localhost:${port}`)
-console.log(`SQLite database: ${databasePath}`)
+console.log('MySQL database connected.')
 if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) console.log('No admin bootstrap configured. Set ADMIN_EMAIL and ADMIN_PASSWORD in .env to create/promote an administrator.')
 if (correoArgentinoConfig.missing.length) console.log(`Correo Argentino desactivado. Faltan en .env: ${correoArgentinoConfig.missing.join(', ')}`)
 else console.log(`Correo Argentino activo (${correoArgentinoConfig.environment}).`)
 if (miCorreoActive) console.log(`MiCorreo activo (${miCorreoConfig.environment}): cotización de envío en el checkout.`)
 else console.log(`MiCorreo desactivado (se usa la tarifa fija). Faltan en .env: ${miCorreoConfig.missing.join(', ')}`)
 
-const shutdown = () => {
-  database.close()
+const shutdown = async () => {
+  await database.close()
   process.exit(0)
 }
 process.on('SIGINT', shutdown)

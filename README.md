@@ -1,16 +1,17 @@
 ﻿# UnFocus Mall
 
-Tienda de ropa con React, Vite, Express y SQLite. Los precios se almacenan en pesos argentinos (ARS); la tienda puede mostrar una conversión indicativa a USD.
+Tienda de ropa con React, Vite, Express y MySQL/MariaDB. Los precios se almacenan en pesos argentinos (ARS); la tienda puede mostrar una conversión indicativa a USD.
 
 ## Requisitos
 
-- Node.js 24 o superior (usa el módulo integrado `node:sqlite`)
+- Node.js 22 o superior para la aplicación; Node.js 24 para el migrador desde SQLite.
+- Una base MySQL/MariaDB con el esquema de `mysql-migration/schema.sql`.
 - npm
 
 ## Desarrollo
 
 1. Copia `.env.example` como `.env`.
-2. Define `ADMIN_EMAIL` y `ADMIN_PASSWORD` en `.env`. La contraseña inicial debe tener al menos 14 caracteres.
+2. Configura `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` y `DB_PASSWORD`; prepara el esquema antes de iniciar. Define `ADMIN_EMAIL` y `ADMIN_PASSWORD` en `.env`. La contraseña inicial debe tener al menos 14 caracteres.
 3. Ejecuta `npm run dev`.
 
 Vite y la API se inician juntos. La tienda queda en `http://localhost:5173` (si el puerto está ocupado, Vite elige el siguiente) y la API escucha en el puerto `3001`.
@@ -19,7 +20,7 @@ En el primer arranque se crea/promueve como administrador el correo indicado en 
 
 ## Cuentas y pedidos
 
-El registro crea una cuenta de cliente. Las sesiones usan cookies `HttpOnly` y las contraseñas se derivan con scrypt. Favoritos, pedidos y notificaciones quedan asociados a la cuenta en SQLite.
+El registro crea una cuenta de cliente. Las sesiones usan cookies `HttpOnly` y las contraseñas se derivan con scrypt. Favoritos, pedidos y notificaciones quedan asociados a la cuenta en MySQL.
 
 ### Checkout y envío
 
@@ -76,8 +77,8 @@ ARS es la moneda base de catálogo, administración y pedidos. Si `USD_ARS_RATE`
 
 ## Persistencia y despliegue
 
-- SQLite: `data/unfocus.sqlite` en desarrollo; en producción, los paths relativos de `DATABASE_PATH` se guardan bajo `$HOME/unfocus-data/`, fuera de los directorios reemplazados en cada despliegue. Los paths absolutos configurados se respetan.
-- Imágenes subidas desde el panel: los archivos se guardan en `uploads/` (o en `UPLOAD_DIR`) y SQLite guarda sus rutas; no se almacenan dentro de la base de datos. En producción, los paths relativos de `UPLOAD_DIR` se guardan bajo `$HOME/unfocus-data/`. Las imágenes de `ident/` son solo de prueba/desarrollo y no se sirven en producción; cargar las fotos reales desde el panel admin después del despliegue.
+- MySQL/MariaDB: configurar las variables `DB_*` y preparar el esquema antes de arrancar. La migración opcional desde SQLite se explica en `mysql-migration/README.md` y solo importa productos.
+- Imágenes subidas desde el panel: los archivos se guardan en `uploads/` (o en `UPLOAD_DIR`) y MySQL guarda sus rutas; no se almacenan dentro de la base de datos. En producción, los paths relativos de `UPLOAD_DIR` se guardan bajo `$HOME/unfocus-data/`. Las imágenes de `ident/` son solo de prueba/desarrollo y no se sirven en producción; cargar las fotos reales desde el panel admin después del despliegue.
 - `.env`, la base de datos y las imágenes subidas están excluidos de Git.
 - Para producción, configura `NODE_ENV=production`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, almacenamiento persistente y HTTPS; ejecuta `npm run build` y luego `npm start`.
 
@@ -99,10 +100,10 @@ Cuando `MP_ACCESS_TOKEN` existe, el checkout crea una preferencia de pago (con e
 
 ### Hostinger (Business/Cloud con Node.js Web Apps)
 
-1. Crear el subdominio (ej. `dev.unfocus.shop`) y una Node.js Web App conectada al repositorio de GitHub; elegir Node 22 o superior (`node:sqlite`).
+1. Crear el subdominio (ej. `dev.unfocus.shop`) y una Node.js Web App conectada al repositorio de GitHub; elegir Node 22 o superior.
 2. Build command: `npm install && npm run build`. Start command: `npm start`.
 3. Variables en el panel: `NODE_ENV=production`, `PUBLIC_BASE_URL=https://dev.unfocus.shop`, `MP_WEBHOOK_URL=https://dev.unfocus.shop/api/payments/webhook`, `MP_WEBHOOK_SECRET`, `MP_ACCESS_TOKEN` (credenciales de prueba), `ADMIN_EMAIL`, `ADMIN_PASSWORD`, SMTP y datos de la tienda.
-4. En producción, SQLite y las imágenes subidas se guardan automáticamente en `$HOME/unfocus-data/`, fuera de la versión desplegada. También se puede definir `DATABASE_PATH` y `UPLOAD_DIR` con paths absolutos a almacenamiento persistente. No crees una base MySQL para esta versión: el servidor usa SQLite (`node:sqlite`).
+4. Configurar `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` y `DB_PASSWORD` con la base MySQL de Hostinger y preparar el esquema. Las imágenes se guardan fuera del despliegue bajo `$HOME/unfocus-data/uploads/`, o en el path persistente indicado por `UPLOAD_DIR`.
 
 ### Descubrimiento por agentes
 
@@ -122,7 +123,7 @@ El ZIP `unfocus-deploy.zip` incluye el código, los recursos de marca y la confi
 4. Con HTTPS configurado en el host o proxy, deja `COOKIE_SECURE` vacío. Para una prueba HTTP local solamente, usa `COOKIE_SECURE=false`.
 5. Ejecuta `docker compose up -d --build` y revisa `docker compose logs -f unfocus`.
 
-Docker conserva la base SQLite y las imágenes cargadas en `data/` y `uploads/`. Este entorno no tiene Docker instalado, por lo que el archivo de Compose no se pudo ejecutar aquí; la API y la compilación se validan localmente con Node.
+Docker requiere una base MySQL externa y conserva las imágenes cargadas en `uploads/`. Desde el contenedor `DB_HOST` debe identificar un servidor accesible, no necesariamente `localhost`. El archivo de Compose no se ha validado en este entorno.
 
 Comprobaciones locales: `npm run build` y `npm run lint`.
 
