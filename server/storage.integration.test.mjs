@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -42,29 +42,30 @@ test('checkout conserva el stock y lo restituye al cancelar', { timeout: 30000, 
   const password = 'testing-only-password-123'
   const paymentFixture = path.join(directory, 'payments.json')
   await writeFile(paymentFixture, '{}')
+  const testEnv = {
+    PATH: process.env.PATH,
+    SystemRoot: process.env.SystemRoot,
+    TEMP: process.env.TEMP,
+    NODE_ENV: 'test',
+    USD_ARS_RATE: '1000',
+    PORT: String(port),
+    DB_HOST: process.env.DB_HOST,
+    DB_PORT: process.env.DB_PORT,
+    DB_NAME: process.env.DB_NAME,
+    DB_USER: process.env.DB_USER,
+    DB_PASSWORD: process.env.DB_PASSWORD,
+    TEST_PAYMENT_FIXTURE: paymentFixture,
+    MP_ACCESS_TOKEN: 'test-token-not-used-with-real-service',
+    MP_ENVIRONMENT: 'test',
+    UPLOAD_DIR: path.join(directory, 'uploads'),
+    ADMIN_EMAIL: email,
+    ADMIN_PASSWORD: password,
+    CORREO_ARGENTINO_API_KEY: 'test-api-key',
+    CORREO_ARGENTINO_AGREEMENT: 'test-agreement',
+  }
   const child = spawn(process.execPath, ['--import', pathToFileURL(path.join(project, 'server', 'test-fixtures', 'mock-payments.mjs')).href, 'server/index.mjs'], {
     cwd: project,
-    env: {
-      PATH: process.env.PATH,
-      SystemRoot: process.env.SystemRoot,
-      TEMP: process.env.TEMP,
-      NODE_ENV: 'test',
-      USD_ARS_RATE: '1000',
-      PORT: String(port),
-      DB_HOST: process.env.DB_HOST,
-      DB_PORT: process.env.DB_PORT,
-      DB_NAME: process.env.DB_NAME,
-      DB_USER: process.env.DB_USER,
-      DB_PASSWORD: process.env.DB_PASSWORD,
-      TEST_PAYMENT_FIXTURE: paymentFixture,
-      MP_ACCESS_TOKEN: 'test-token-not-used-with-real-service',
-      MP_ENVIRONMENT: 'test',
-      UPLOAD_DIR: path.join(directory, 'uploads'),
-      ADMIN_EMAIL: email,
-      ADMIN_PASSWORD: password,
-      CORREO_ARGENTINO_API_KEY: 'test-api-key',
-      CORREO_ARGENTINO_AGREEMENT: 'test-agreement',
-    },
+    env: testEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let output = ''
@@ -92,6 +93,58 @@ test('checkout conserva el stock y lo restituye al cancelar', { timeout: 30000, 
     }
   }
   assert.ok(ready, `El servidor no inició: ${output}`)
+
+  await t.test('sirve las páginas HTML y Markdown en modo producción', async (productionTest) => {
+    try {
+      await access(path.join(project, 'dist', 'index.html'))
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+      productionTest.skip('Ejecuta npm run build antes de probar las páginas de producción.')
+      return
+    }
+    const productionPort = await availablePort()
+    const productionBase = `http://127.0.0.1:${productionPort}`
+    const production = spawn(process.execPath, ['server/index.mjs'], {
+      cwd: project,
+      env: { ...testEnv, PORT: String(productionPort), NODE_ENV: 'production', HOME: directory, PUBLIC_BASE_URL: 'https://example.test', ADMIN_EMAIL: '', ADMIN_PASSWORD: '' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let productionOutput = ''
+    production.stdout.on('data', (data) => { productionOutput += data })
+    production.stderr.on('data', (data) => { productionOutput += data })
+    try {
+      let productionReady = false
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (production.exitCode !== null) throw new Error(`El servidor de producción terminó al iniciar: ${productionOutput}`)
+        try {
+          if ((await fetch(`${productionBase}/api/health`)).ok) {
+            productionReady = true
+            break
+          }
+        } catch {
+          await delay(100)
+        }
+      }
+      assert.ok(productionReady, `El servidor de producción no inició: ${productionOutput}`)
+      const home = await fetch(productionBase)
+      assert.equal(home.status, 200)
+      assert.match(await home.text(), /UnFocus/)
+      const legal = await fetch(`${productionBase}/?legal=terminos`)
+      assert.equal(legal.status, 200)
+      const markdown = await fetch(productionBase, { headers: { Accept: 'text/markdown' } })
+      assert.equal(markdown.status, 200)
+      assert.match(markdown.headers.get('content-type'), /text\/markdown/)
+      assert.match(await markdown.text(), /UnFocus/)
+      const missing = await fetch(`${productionBase}/pagina-inexistente`)
+      assert.equal(missing.status, 404)
+    } finally {
+      if (production.exitCode === null && production.signalCode === null) {
+        const exited = new Promise((resolve) => production.once('exit', resolve))
+        production.kill()
+        await exited
+      }
+    }
+  })
 
   async function request(url, { method = 'GET', body, cookie } = {}) {
     const response = await fetch(`${base}${url}`, {

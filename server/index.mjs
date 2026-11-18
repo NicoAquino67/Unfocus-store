@@ -575,10 +575,12 @@ const transferDetails = () => {
   return holder && (cbu || alias) ? { holder, bank, cbu, alias, taxId } : null
 }
 
+const publicStoreContact = () => ({ legalName: storeSettings.legalName, taxId: storeSettings.taxId, address: storeSettings.address, email: storeSettings.email, phone: storeSettings.phone })
+
 const publicStoreConfig = (provinceRates) => ({
   shipping: { costArs: storeSettings.shippingCostArs, freeThresholdArs: storeSettings.freeShippingThresholdArs, pickupAddress: storeSettings.pickupAddress, provinceCostsArs: publicProvinceCosts(provinceRates) },
   transfer: transferDetails(),
-  store: { legalName: storeSettings.legalName, taxId: storeSettings.taxId, address: storeSettings.address, email: storeSettings.email, phone: storeSettings.phone },
+  store: publicStoreContact(),
 })
 
 app.get('/api/config', async (_request, response) => {
@@ -1882,7 +1884,7 @@ if (isProduction) {
     })
     const html = await readFile(indexHtmlPath, 'utf8')
     response.setHeader('Cache-Control', 'no-cache')
-    const publicContact = publicStoreConfig().store
+    const publicContact = publicStoreContact()
     const linkHeader = `<${seoBaseUrl}/llms.txt>; rel="alternate"; type="text/plain"; title="llms.txt", <${seoBaseUrl}/>; rel="alternate"; type="text/markdown"; title="Markdown"`
     response.setHeader('Link', linkHeader)
     if (requestsMarkdown) {
